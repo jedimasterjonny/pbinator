@@ -14,7 +14,12 @@ from pbinator.settings import Settings
 from pbinator.strava import TokenPayload, build_authorize_url, exchange_code, refresh
 
 _COOKIE_NAME = "pbinator_strava"
+_OAUTH_STATE_COOKIE_NAME = "pbinator_oauth_state"
 _COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 90  # 90 days
+# CSRF state must survive the external redirect to Strava, so it cannot live in
+# st.session_state (which is bound to the Streamlit WebSocket session and dies
+# when the browser navigates away). 10 minutes is enough for the consent screen.
+_OAUTH_STATE_COOKIE_MAX_AGE_SECONDS = 60 * 10
 _REFRESH_WINDOW_SECONDS = 60
 
 
@@ -75,10 +80,20 @@ def _maybe_refresh(
     return refreshed
 
 
-def _render_logged_out(settings: Settings) -> None:
-    if "oauth_state" not in st.session_state:
-        st.session_state.oauth_state = secrets.token_urlsafe(32)
-    url = build_authorize_url(settings, state=st.session_state.oauth_state)
+def _render_logged_out(settings: Settings, controller: CookieController) -> None:
+    cached = controller.get(_OAUTH_STATE_COOKIE_NAME)
+    if isinstance(cached, str) and cached:
+        state = cached
+    else:
+        state = secrets.token_urlsafe(32)
+        controller.set(
+            _OAUTH_STATE_COOKIE_NAME,
+            state,
+            max_age=_OAUTH_STATE_COOKIE_MAX_AGE_SECONDS,
+            same_site="lax",
+            path="/",
+        )
+    url = build_authorize_url(settings, state=state)
     st.link_button("Authorize with Strava", url)
 
 
@@ -96,17 +111,21 @@ def _handle_callback(settings: Settings, controller: CookieController) -> None:
     params = st.query_params
     if "error" in params:
         st.warning("Authorization denied — try again.")
+        if controller.get(_OAUTH_STATE_COOKIE_NAME) is not None:
+            controller.remove(_OAUTH_STATE_COOKIE_NAME)
         st.query_params.clear()
         return
     if "code" not in params:
         return
 
-    expected_state = st.session_state.get("oauth_state")
+    expected_state = controller.get(_OAUTH_STATE_COOKIE_NAME)
     received_state = params.get("state")
     if not expected_state or received_state != expected_state:
         st.error("Invalid OAuth state. Please log in again.")
         if controller.get(_COOKIE_NAME) is not None:
             controller.remove(_COOKIE_NAME)
+        if controller.get(_OAUTH_STATE_COOKIE_NAME) is not None:
+            controller.remove(_OAUTH_STATE_COOKIE_NAME)
         st.session_state.clear()
         st.query_params.clear()
         return
@@ -120,7 +139,8 @@ def _handle_callback(settings: Settings, controller: CookieController) -> None:
 
     _write_cookie(controller, token)
     st.session_state.token = token
-    st.session_state.pop("oauth_state", None)
+    if controller.get(_OAUTH_STATE_COOKIE_NAME) is not None:
+        controller.remove(_OAUTH_STATE_COOKIE_NAME)
     st.query_params.clear()
     st.rerun()
 
@@ -148,7 +168,7 @@ def main() -> None:
     if token is not None:
         _render_logged_in(token, controller)
     else:
-        _render_logged_out(settings)
+        _render_logged_out(settings, controller)
 
 
 main()
