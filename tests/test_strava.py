@@ -1,7 +1,10 @@
+from urllib.parse import parse_qs, urlparse
+
 import pytest
 from pydantic import ValidationError
 
-from pbinator.strava import TokenPayload
+from pbinator.settings import Settings
+from pbinator.strava import TokenPayload, build_authorize_url
 
 
 def _strava_token_response() -> dict[str, object]:
@@ -48,3 +51,31 @@ def test_token_payload_round_trips_via_json() -> None:
 def test_token_payload_rejects_corrupt_data() -> None:
     with pytest.raises(ValidationError):
         TokenPayload.model_validate({"access_token": "only-this"})
+
+
+def _settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
+    monkeypatch.setenv("STRAVA_CLIENT_ID", "client-123")
+    monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
+    monkeypatch.setenv("STRAVA_REDIRECT_URI", "http://localhost:8501/")
+    # ty: see test_settings.py for justification of the missing-argument ignore
+    return Settings()  # ty: ignore[missing-argument]
+
+
+def test_build_authorize_url_contains_required_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(monkeypatch)
+    url = build_authorize_url(settings, state="csrf-abc")
+
+    parsed = urlparse(url)
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "www.strava.com"
+    assert parsed.path == "/oauth/authorize"
+
+    params = parse_qs(parsed.query)
+    assert params["client_id"] == ["client-123"]
+    assert params["redirect_uri"] == ["http://localhost:8501/"]
+    assert params["response_type"] == ["code"]
+    assert params["approval_prompt"] == ["auto"]
+    assert params["scope"] == ["activity:read"]
+    assert params["state"] == ["csrf-abc"]

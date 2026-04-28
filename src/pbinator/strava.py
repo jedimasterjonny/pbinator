@@ -1,6 +1,28 @@
 from typing import Any
+from urllib.parse import urlencode
 
 from pydantic import BaseModel
+
+from pbinator.settings import Settings
+
+_AUTHORIZE_URL = "https://www.strava.com/oauth/authorize"
+
+
+def build_authorize_url(settings: Settings, state: str) -> str:
+    """Build the Strava OAuth2 authorize URL for the activity:read scope.
+
+    Returns:
+        The fully-qualified authorize URL with all required query parameters.
+    """
+    params = {
+        "client_id": settings.strava_client_id,
+        "redirect_uri": settings.strava_redirect_uri,
+        "response_type": "code",
+        "approval_prompt": "auto",
+        "scope": "activity:read",
+        "state": state,
+    }
+    return f"{_AUTHORIZE_URL}?{urlencode(params)}"
 
 
 class TokenPayload(BaseModel):
