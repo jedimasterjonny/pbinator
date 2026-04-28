@@ -425,6 +425,12 @@ def test_full_rescan_empty_first_page_does_not_wipe_db(
                 athlete_id=42,
                 activity=_activity(1, "2024-04-15T07:00:00Z"),
             )
+            store.update_cursor(
+                conn,
+                athlete_id=42,
+                last_activity_start="2024-04-15T07:00:00Z",
+                last_synced_at="2024-04-15T08:00:00Z",
+            )
     finally:
         conn.close()
 
@@ -436,6 +442,7 @@ def test_full_rescan_empty_first_page_does_not_wipe_db(
     try:
         result = full_rescan(_token(), settings, conn)
         count = store.count_activities(conn, athlete_id=42)
+        cursor = store.get_cursor(conn, athlete_id=42)
     finally:
         conn.close()
 
@@ -443,6 +450,8 @@ def test_full_rescan_empty_first_page_does_not_wipe_db(
     assert result.rate_limited is False
     assert result.deleted == 0
     assert count == 1  # safety belt: empty first page DOES NOT trigger reconcile
+    assert cursor is not None
+    assert cursor.last_activity_start == "2024-04-15T07:00:00Z"
 
 
 @respx.mock
@@ -458,6 +467,12 @@ def test_full_rescan_error_does_not_reconcile(
                 athlete_id=42,
                 activity=_activity(1, "2024-04-15T07:00:00Z"),
             )
+            store.update_cursor(
+                conn,
+                athlete_id=42,
+                last_activity_start="2024-04-15T07:00:00Z",
+                last_synced_at="2024-04-15T08:00:00Z",
+            )
     finally:
         conn.close()
 
@@ -469,12 +484,15 @@ def test_full_rescan_error_does_not_reconcile(
     try:
         result = full_rescan(_token(), settings, conn)
         count = store.count_activities(conn, athlete_id=42)
+        cursor = store.get_cursor(conn, athlete_id=42)
     finally:
         conn.close()
 
     assert result.error == "http_error"
     assert result.deleted == 0
     assert count == 1
+    assert cursor is not None
+    assert cursor.last_activity_start == "2024-04-15T07:00:00Z"
 
 
 @respx.mock
@@ -490,6 +508,12 @@ def test_full_rescan_auth_error_does_not_reconcile(
                 athlete_id=42,
                 activity=_activity(1, "2024-04-15T07:00:00Z"),
             )
+            store.update_cursor(
+                conn,
+                athlete_id=42,
+                last_activity_start="2024-04-15T07:00:00Z",
+                last_synced_at="2024-04-15T08:00:00Z",
+            )
     finally:
         conn.close()
 
@@ -501,12 +525,15 @@ def test_full_rescan_auth_error_does_not_reconcile(
     try:
         result = full_rescan(_token(), settings, conn)
         count = store.count_activities(conn, athlete_id=42)
+        cursor = store.get_cursor(conn, athlete_id=42)
     finally:
         conn.close()
 
     assert result.error == "auth_failed"
     assert result.deleted == 0
     assert count == 1
+    assert cursor is not None
+    assert cursor.last_activity_start == "2024-04-15T07:00:00Z"
 
 
 @respx.mock
@@ -523,6 +550,12 @@ def test_full_rescan_rate_limited_429_does_not_reconcile(
                     athlete_id=42,
                     activity=_activity(activity_id, "2024-04-15T07:00:00Z"),
                 )
+            store.update_cursor(
+                conn,
+                athlete_id=42,
+                last_activity_start="2024-04-15T07:00:00Z",
+                last_synced_at="2024-04-15T08:00:00Z",
+            )
     finally:
         conn.close()
 
@@ -541,6 +574,7 @@ def test_full_rescan_rate_limited_429_does_not_reconcile(
     try:
         result = full_rescan(_token(), settings, conn)
         count = store.count_activities(conn, athlete_id=42)
+        cursor = store.get_cursor(conn, athlete_id=42)
     finally:
         conn.close()
 
@@ -548,6 +582,8 @@ def test_full_rescan_rate_limited_429_does_not_reconcile(
     assert result.error is None
     assert result.deleted == 0
     assert count == 2
+    assert cursor is not None
+    assert cursor.last_activity_start == "2024-04-15T07:00:00Z"
 
 
 @respx.mock
