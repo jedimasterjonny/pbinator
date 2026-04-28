@@ -113,8 +113,8 @@ def _handle_callback(settings: Settings, controller: CookieController) -> None:
 
     try:
         token = exchange_code(params["code"], settings)
-    except httpx.HTTPError as exc:
-        st.error(f"Login failed: {exc}")
+    except httpx.HTTPError:
+        st.error("Login failed. Please try again.")
         st.query_params.clear()
         return
 
