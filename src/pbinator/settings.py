@@ -1,3 +1,4 @@
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,5 +9,6 @@ class Settings(BaseSettings):
         extra="forbid",
     )
 
-
-settings = Settings()
+    strava_client_id: str
+    strava_client_secret: SecretStr
+    strava_redirect_uri: str = "http://localhost:8501/"

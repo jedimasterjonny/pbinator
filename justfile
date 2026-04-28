@@ -38,5 +38,8 @@ pre-commit:
 build:
     uv build
 
+run:
+    uv run streamlit run src/pbinator/app.py
+
 clean:
     rm -rf .venv .ruff_cache .pytest_cache .ty_cache htmlcov .coverage coverage.xml junit.xml dist build
