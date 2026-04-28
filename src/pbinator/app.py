@@ -152,7 +152,16 @@ def main() -> None:
     if settings is None:  # st.stop already called; satisfies the type checker
         return
 
+    # CookieController's Python-side cache is empty on the first render after a
+    # page load — its custom component needs a JS round-trip before it can ship
+    # real cookies back. Streamlit stores the component's value under its `key`
+    # in session_state, so the absence of "cookies" tells us we're on that first
+    # render. Defer until the post-sync rerun; otherwise the OAuth state cookie
+    # appears missing and every callback fails CSRF validation.
+    cookies_synced = "cookies" in st.session_state
     controller = CookieController()
+    if not cookies_synced:
+        return
 
     if "token" not in st.session_state:
         cookie_token = _read_cookie(controller)
