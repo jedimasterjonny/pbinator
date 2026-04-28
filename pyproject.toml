@@ -170,6 +170,8 @@ source = ["src"]
 branch = true
 parallel = true
 relative_files = true
+# Streamlit glue is exercised manually; pure logic lives in src/pbinator/strava.py.
+omit = ["src/pbinator/app.py"]
 
 [tool.coverage.report]
 show_missing = true
