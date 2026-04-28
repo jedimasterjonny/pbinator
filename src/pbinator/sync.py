@@ -158,3 +158,89 @@ def run(
         error=error,
         deleted=0,
     )
+
+
+def full_rescan(
+    token: TokenPayload,
+    settings: Settings,  # noqa: ARG001 — reserved for future use; kept for interface symmetry
+    conn: sqlite3.Connection,
+    on_page: Callable[[int, int], None] | None = None,
+) -> SyncResult:
+    """Re-fetch every activity, upsert, and reconcile deletions on a clean run.
+
+    Reconciliation (deleting unseen rows for this athlete) only fires when the
+    run completed without rate-limit truncation, without errors, AND saw at
+    least one activity. An empty first page is treated as a transient/visibility
+    issue and does NOT wipe the local DB.
+
+    Returns:
+        A ``SyncResult`` with ``deleted`` set on a clean reconciling run, else 0.
+    """
+    seen_ids: set[int] = set()
+    max_seen_start: str | None = None
+    page = 1
+    pages_fetched = 0
+    inserted = 0
+    rate_limited = False
+    error: str | None = None
+    usage: RateLimitUsage | None = None
+
+    try:
+        with httpx.Client(timeout=_HTTP_TIMEOUT_SECONDS) as client:
+            while True:
+                page_data = activities_api.fetch_page(
+                    client,
+                    token.access_token,
+                    after=None,
+                    page=page,
+                    per_page=_PER_PAGE,
+                )
+                pages_fetched += 1
+                usage = page_data.usage
+                if not page_data.activities:
+                    break
+                with conn:
+                    for activity in page_data.activities:
+                        store.upsert_activity(conn, athlete_id=token.athlete_id, activity=activity)
+                        seen_ids.add(int(activity["id"]))
+                        inserted += 1
+                        max_seen_start = max_iso(max_seen_start, str(activity["start_date"]))
+                if on_page is not None:
+                    on_page(page, len(page_data.activities))
+                if would_exceed_next_call(usage):
+                    rate_limited = True
+                    break
+                page += 1
+    except RateLimited as exc:
+        rate_limited = True
+        usage = exc.usage if exc.usage is not None else usage
+    except AuthError:
+        error = "auth_failed"
+    except httpx.HTTPError:
+        error = "http_error"
+
+    deleted = 0
+    # See the SQLite commit gotcha at the top of this plan: every write must
+    # be inside `with conn:` to commit before the connection is closed.
+    if not rate_limited and error is None and seen_ids:
+        with conn:
+            deleted = store.delete_activities_not_in(
+                conn, athlete_id=token.athlete_id, kept_ids=seen_ids
+            )
+
+    with conn:
+        store.update_cursor(
+            conn,
+            athlete_id=token.athlete_id,
+            last_activity_start=max_seen_start,
+            last_synced_at=_now_iso(),
+        )
+
+    return SyncResult(
+        inserted_or_updated=inserted,
+        pages_fetched=pages_fetched,
+        rate_limited=rate_limited,
+        usage=usage,
+        error=error,
+        deleted=deleted,
+    )
