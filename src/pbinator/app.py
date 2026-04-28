@@ -4,14 +4,23 @@ from __future__ import annotations
 
 import secrets
 import time
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 import httpx
 import streamlit as st
 from pydantic import ValidationError
 from streamlit_cookies_controller import CookieController
 
+from pbinator import store, sync
 from pbinator.settings import Settings
 from pbinator.strava import TokenPayload, build_authorize_url, exchange_code, refresh
+
+if TYPE_CHECKING:
+    import sqlite3
+
+    from pbinator.activities_api import RateLimitUsage
+    from pbinator.sync import SyncResult
 
 _COOKIE_NAME = "pbinator_strava"
 _OAUTH_STATE_COOKIE_NAME = "pbinator_oauth_state"
@@ -80,6 +89,73 @@ def _maybe_refresh(
     return refreshed
 
 
+def _format_resume_message(usage: RateLimitUsage | None) -> str:
+    """Human-readable hint for when the rate limit resets.
+
+    Returns:
+        A short string like "Try again at 14:15 UTC" (15-min window) or
+        "Try again after midnight UTC" (daily limit hit).
+    """
+    # Mirror the same threshold sync.would_exceed_next_call uses (margin=2):
+    # if the daily count is what tripped the stop, the 15-min message is wrong.
+    margin = 2
+    now = datetime.now(UTC)
+    if usage is not None and usage.daily_used + 1 + margin > usage.daily_limit:
+        return "Try again after midnight UTC."
+    minute = (now.minute // 15 + 1) * 15
+    if minute >= 60:  # noqa: PLR2004 — minutes-per-hour boundary
+        next_reset = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    else:
+        next_reset = now.replace(minute=minute, second=0, microsecond=0)
+    return f"Try again at {next_reset.strftime('%H:%M')} UTC."
+
+
+def _render_sync_result(result: SyncResult, controller: CookieController) -> None:
+    if result.error == "auth_failed":
+        st.error("Session expired — please log in again.")
+        if controller.get(_COOKIE_NAME) is not None:
+            controller.remove(_COOKIE_NAME)
+        st.session_state.clear()
+        return
+    if result.error == "http_error":
+        st.error("Sync failed. Please try again.")
+        return
+    if result.rate_limited:
+        st.warning(
+            f"Rate-limited after {result.inserted_or_updated} activities. "
+            f"{_format_resume_message(result.usage)}"
+        )
+        return
+    if result.deleted:
+        st.success(
+            f"Synced {result.inserted_or_updated} activities; "
+            f"removed {result.deleted} no longer on Strava."
+        )
+        return
+    st.success(f"Synced {result.inserted_or_updated} new activities.")
+
+
+def _run_sync_with_status(
+    token: TokenPayload,
+    settings: Settings,
+    conn: sqlite3.Connection,
+    *,
+    full: bool,
+) -> SyncResult:
+    label = "Full rescan…" if full else "Syncing…"
+    with st.status(label, expanded=True) as status:
+
+        def on_page(page_number: int, count: int) -> None:
+            status.write(f"Page {page_number} — {count} activities")
+
+        if full:
+            result = sync.full_rescan(token, settings, conn, on_page=on_page)
+        else:
+            result = sync.run(token, settings, conn, on_page=on_page)
+        status.update(state="complete")
+    return result
+
+
 def _render_logged_out(settings: Settings, controller: CookieController) -> None:
     cached = controller.get(_OAUTH_STATE_COOKIE_NAME)
     if isinstance(cached, str) and cached:
@@ -97,13 +173,45 @@ def _render_logged_out(settings: Settings, controller: CookieController) -> None
     st.link_button("Authorize with Strava", url)
 
 
-def _render_logged_in(token: TokenPayload, controller: CookieController) -> None:
-    """Show the athlete's name and a logout button."""
+def _render_logged_in(
+    token: TokenPayload, settings: Settings, controller: CookieController
+) -> None:
+    """Show the athlete header, sync UI, and a logout button."""
     st.write(f"Logged in as {token.athlete_first_name} {token.athlete_last_name}")
-    if st.button("Log out"):
-        controller.remove(_COOKIE_NAME)
-        st.session_state.clear()
-        st.rerun()
+
+    db_conn = store.connect(settings.pbinator_db_path)
+    try:
+        count = store.count_activities(db_conn, athlete_id=token.athlete_id)
+        cursor = store.get_cursor(db_conn, athlete_id=token.athlete_id)
+        last_synced = cursor.last_synced_at if cursor is not None else None
+        st.write(f"Stored activities: **{count}**")
+        if last_synced:
+            st.caption(f"Last synced: {last_synced}")
+
+        col_sync, col_rescan, col_logout = st.columns(3)
+        clicked_sync = col_sync.button("Sync activities")
+        confirm_rescan = col_rescan.checkbox("Confirm full rescan")
+        clicked_rescan = col_rescan.button("Full rescan", disabled=not confirm_rescan)
+        clicked_logout = col_logout.button("Log out")
+
+        if clicked_sync or clicked_rescan:
+            # Do NOT call st.rerun() on success — it would wipe the status
+            # block and result message before the user can read them. The
+            # count display at the top is stale until the next interaction;
+            # that's an acceptable trade-off for v1.
+            result = _run_sync_with_status(token, settings, db_conn, full=clicked_rescan)
+            _render_sync_result(result, controller)
+            if result.error == "auth_failed":
+                # Cookie was cleared inside _render_sync_result; rerun so
+                # the logged-out view renders cleanly.
+                st.rerun()
+
+        if clicked_logout:
+            controller.remove(_COOKIE_NAME)
+            st.session_state.clear()
+            st.rerun()
+    finally:
+        db_conn.close()
 
 
 def _handle_callback(settings: Settings, controller: CookieController) -> None:
@@ -175,7 +283,7 @@ def main() -> None:
 
     token = st.session_state.get("token")
     if token is not None:
-        _render_logged_in(token, controller)
+        _render_logged_in(token, settings, controller)
     else:
         _render_logged_out(settings, controller)
 
