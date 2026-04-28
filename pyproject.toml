@@ -10,7 +10,10 @@ authors = [
     { name = "jedimasterjonny", email = "me@jonnyoc.uk" },
 ]
 dependencies = [
+    "httpx>=0.28.1",
     "pydantic-settings>=2.0",
+    "streamlit>=1.56.0",
+    "streamlit-cookies-controller>=0.0.4",
 ]
 
 [dependency-groups]
@@ -24,6 +27,7 @@ dev = [
     "pytest-timeout>=2.3",
     "pytest-socket>=0.7",
     "pre-commit>=4.0",
+    "respx>=0.21",
 ]
 
 [tool.uv]
