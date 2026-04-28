@@ -22,3 +22,6 @@ wheels/
 .coverage.*
 coverage.xml
 htmlcov/
+
+# Local data
+data/
