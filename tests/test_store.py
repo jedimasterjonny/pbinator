@@ -136,3 +136,75 @@ def test_upsert_scopes_by_athlete(db_path: Path) -> None:
         conn.close()
 
     assert count == 2  # same activity_id under different athletes is fine
+
+
+def test_get_cursor_returns_none_when_absent(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        cursor = store.get_cursor(conn, athlete_id=42)
+    finally:
+        conn.close()
+
+    assert cursor is None
+
+
+def test_update_cursor_inserts_then_updates(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.update_cursor(
+            conn,
+            athlete_id=42,
+            last_activity_start="2024-04-15T07:00:00Z",
+            last_synced_at="2024-04-15T08:00:00Z",
+        )
+        first = store.get_cursor(conn, athlete_id=42)
+
+        store.update_cursor(
+            conn,
+            athlete_id=42,
+            last_activity_start="2024-05-01T07:00:00Z",
+            last_synced_at="2024-05-01T08:00:00Z",
+        )
+        second = store.get_cursor(conn, athlete_id=42)
+    finally:
+        conn.close()
+
+    assert first is not None
+    assert first.last_activity_start == "2024-04-15T07:00:00Z"
+    assert second is not None
+    assert second.last_activity_start == "2024-05-01T07:00:00Z"
+    assert second.last_synced_at == "2024-05-01T08:00:00Z"
+
+
+def test_update_cursor_accepts_none_last_activity_start(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.update_cursor(
+            conn,
+            athlete_id=42,
+            last_activity_start=None,
+            last_synced_at="2024-05-01T08:00:00Z",
+        )
+        cursor = store.get_cursor(conn, athlete_id=42)
+    finally:
+        conn.close()
+
+    assert cursor is not None
+    assert cursor.last_activity_start is None
+    assert cursor.last_synced_at == "2024-05-01T08:00:00Z"
+
+
+def test_get_cursor_scopes_by_athlete(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.update_cursor(
+            conn,
+            athlete_id=1,
+            last_activity_start="2024-01-01T00:00:00Z",
+            last_synced_at="2024-01-01T00:00:00Z",
+        )
+        cursor = store.get_cursor(conn, athlete_id=2)
+    finally:
+        conn.close()
+
+    assert cursor is None

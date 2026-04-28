@@ -6,6 +6,7 @@ No Streamlit, no env reads, no global state.
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -98,5 +99,66 @@ def upsert_activity(
             "name": str(activity["name"]),
             "raw_json": json.dumps(activity, separators=(",", ":")),
             "fetched_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        },
+    )
+
+
+@dataclass(frozen=True)
+class SyncCursor:
+    """Per-athlete sync progress.
+
+    ``last_activity_start`` is the ISO-UTC ``start_date`` of the newest
+    activity we have stored. ``last_synced_at`` is the ISO-UTC timestamp
+    when the most recent sync (successful, partial, or errored) finished.
+    """
+
+    last_activity_start: str | None
+    last_synced_at: str | None
+
+
+_GET_CURSOR_SQL = """
+SELECT last_activity_start, last_synced_at
+FROM sync_cursor
+WHERE athlete_id = ?
+"""
+
+_UPSERT_CURSOR_SQL = """
+INSERT INTO sync_cursor (athlete_id, last_activity_start, last_synced_at)
+VALUES (:athlete_id, :last_activity_start, :last_synced_at)
+ON CONFLICT(athlete_id) DO UPDATE SET
+    last_activity_start = excluded.last_activity_start,
+    last_synced_at      = excluded.last_synced_at
+"""
+
+
+def get_cursor(conn: sqlite3.Connection, athlete_id: int) -> SyncCursor | None:
+    """Return the sync cursor for ``athlete_id``, or None if no sync has run yet.
+
+    Returns:
+        A ``SyncCursor`` with the stored timestamps, or ``None``.
+    """
+    row = conn.execute(_GET_CURSOR_SQL, (athlete_id,)).fetchone()
+    if row is None:
+        return None
+    return SyncCursor(
+        last_activity_start=row["last_activity_start"],
+        last_synced_at=row["last_synced_at"],
+    )
+
+
+def update_cursor(
+    conn: sqlite3.Connection,
+    *,
+    athlete_id: int,
+    last_activity_start: str | None,
+    last_synced_at: str,
+) -> None:
+    """Insert or update the sync cursor for ``athlete_id``."""
+    conn.execute(
+        _UPSERT_CURSOR_SQL,
+        {
+            "athlete_id": athlete_id,
+            "last_activity_start": last_activity_start,
+            "last_synced_at": last_synced_at,
         },
     )
