@@ -177,7 +177,11 @@ def full_rescan(
         A ``SyncResult`` with ``deleted`` set on a clean reconciling run, else 0.
     """
     seen_ids: set[int] = set()
-    max_seen_start: str | None = None
+    # Seed from the existing cursor so a no-op rescan (empty first page,
+    # network/auth/rate-limit error before any page completes) does not wipe
+    # the previously stored last_activity_start when update_cursor runs below.
+    cursor = store.get_cursor(conn, athlete_id=token.athlete_id)
+    max_seen_start: str | None = cursor.last_activity_start if cursor is not None else None
     page = 1
     pages_fetched = 0
     inserted = 0
