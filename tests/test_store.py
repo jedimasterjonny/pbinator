@@ -1,4 +1,3 @@
-import sqlite3  # noqa: F401 — used in later test additions
 from pathlib import Path
 
 import pytest

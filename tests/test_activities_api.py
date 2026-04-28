@@ -73,7 +73,7 @@ def test_fetch_page_returns_activities_and_usage() -> None:
     with httpx.Client(timeout=5.0) as client:
         page = fetch_page(
             client,
-            access_token="bearer-xyz",  # noqa: S106
+            access_token="bearer-xyz",  # noqa: S106 — fixture bearer token, not a real credential
             after=None,
             page=1,
             per_page=200,
@@ -102,7 +102,7 @@ def test_fetch_page_passes_after_when_provided() -> None:
     with httpx.Client(timeout=5.0) as client:
         fetch_page(
             client,
-            access_token="bearer-xyz",  # noqa: S106
+            access_token="bearer-xyz",  # noqa: S106 — fixture bearer token, not a real credential
             after=1714000000,
             page=2,
             per_page=200,
@@ -120,7 +120,7 @@ def test_fetch_page_raises_auth_error_on_401() -> None:
     )
 
     with httpx.Client(timeout=5.0) as client, pytest.raises(AuthError):
-        fetch_page(client, access_token="bad", after=None, page=1, per_page=200)  # noqa: S106
+        fetch_page(client, access_token="bad", after=None, page=1, per_page=200)  # noqa: S106 — fixture bearer token, not a real credential
 
 
 @respx.mock
@@ -139,7 +139,7 @@ def test_fetch_page_raises_rate_limited_on_429() -> None:
     )
 
     with httpx.Client(timeout=5.0) as client, pytest.raises(RateLimited) as excinfo:
-        fetch_page(client, access_token="t", after=None, page=1, per_page=200)  # noqa: S106
+        fetch_page(client, access_token="t", after=None, page=1, per_page=200)  # noqa: S106 — fixture bearer token, not a real credential
 
     assert excinfo.value.usage is not None
     assert excinfo.value.usage.short_used == 100
@@ -152,7 +152,7 @@ def test_fetch_page_raises_rate_limited_with_no_headers_on_429() -> None:
     )
 
     with httpx.Client(timeout=5.0) as client, pytest.raises(RateLimited) as excinfo:
-        fetch_page(client, access_token="t", after=None, page=1, per_page=200)  # noqa: S106
+        fetch_page(client, access_token="t", after=None, page=1, per_page=200)  # noqa: S106 — fixture bearer token, not a real credential
 
     assert excinfo.value.usage is None
 
@@ -164,4 +164,4 @@ def test_fetch_page_propagates_other_http_errors() -> None:
     )
 
     with httpx.Client(timeout=5.0) as client, pytest.raises(httpx.HTTPStatusError):
-        fetch_page(client, access_token="t", after=None, page=1, per_page=200)  # noqa: S106
+        fetch_page(client, access_token="t", after=None, page=1, per_page=200)  # noqa: S106 — fixture bearer token, not a real credential

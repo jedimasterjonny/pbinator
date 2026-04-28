@@ -36,7 +36,7 @@ class ActivityPage:
     usage: RateLimitUsage
 
 
-class RateLimited(Exception):  # noqa: N818
+class RateLimited(Exception):  # noqa: N818 — canonical Strava-domain term; "RateLimitedError" would be redundant
     """Raised when Strava returns 429. Carries the parsed usage if present."""
 
     def __init__(self, usage: RateLimitUsage | None) -> None:
