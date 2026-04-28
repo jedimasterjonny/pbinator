@@ -11,6 +11,10 @@ def isolated_settings_cls(
 ) -> type[Settings]:
     """Settings subclass that ignores any local .env file during tests.
 
+    Call sites use ``# ty: ignore[missing-argument]`` because ty cannot perform
+    flow-sensitive analysis across pydantic-settings' env-var injection, so it
+    incorrectly reports the required fields as missing arguments.
+
     Returns:
         A Settings subclass configured to read from environment variables only.
     """
@@ -34,7 +38,6 @@ def test_strava_credentials_load_from_env(
     monkeypatch.setenv("STRAVA_CLIENT_ID", "client-123")
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
 
-    # ty cannot see that pydantic-settings populates required fields from env vars
     s = isolated_settings_cls()  # ty: ignore[missing-argument]
 
     assert s.strava_client_id == "client-123"
@@ -47,7 +50,6 @@ def test_redirect_uri_defaults_to_localhost(
     monkeypatch.setenv("STRAVA_CLIENT_ID", "client-123")
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
 
-    # ty cannot see that pydantic-settings populates required fields from env vars
     s = isolated_settings_cls()  # ty: ignore[missing-argument]
 
     assert s.strava_redirect_uri == "http://localhost:8501/"
@@ -60,7 +62,6 @@ def test_redirect_uri_can_be_overridden(
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
     monkeypatch.setenv("STRAVA_REDIRECT_URI", "http://localhost:9000/")
 
-    # ty cannot see that pydantic-settings populates required fields from env vars
     s = isolated_settings_cls()  # ty: ignore[missing-argument]
 
     assert s.strava_redirect_uri == "http://localhost:9000/"
@@ -70,5 +71,4 @@ def test_missing_credentials_raises_validation_error(
     isolated_settings_cls: type[Settings],
 ) -> None:
     with pytest.raises(ValidationError):
-        # ty cannot see that pydantic-settings populates required fields from env vars
         isolated_settings_cls()  # ty: ignore[missing-argument]
