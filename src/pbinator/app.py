@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+import time
 
 import httpx
 import streamlit as st
@@ -10,10 +11,11 @@ from pydantic import ValidationError
 from streamlit_cookies_controller import CookieController
 
 from pbinator.settings import Settings
-from pbinator.strava import TokenPayload, build_authorize_url, exchange_code
+from pbinator.strava import TokenPayload, build_authorize_url, exchange_code, refresh
 
 _COOKIE_NAME = "pbinator_strava"
 _COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 90  # 90 days
+_REFRESH_WINDOW_SECONDS = 60
 
 
 def _load_settings() -> Settings | None:
@@ -49,6 +51,27 @@ def _write_cookie(controller: CookieController, token: TokenPayload) -> None:
         same_site="lax",
         path="/",
     )
+
+
+def _maybe_refresh(
+    token: TokenPayload, settings: Settings, controller: CookieController
+) -> TokenPayload | None:
+    """Refresh the token if near expiry; return the (possibly updated) token, or None on failure.
+
+    Returns:
+        The original token, a refreshed token, or ``None`` if refresh failed.
+    """
+    if token.expires_at - int(time.time()) > _REFRESH_WINDOW_SECONDS:
+        return token
+    try:
+        refreshed = refresh(token, settings)
+    except httpx.HTTPError:
+        if controller.get(_COOKIE_NAME) is not None:
+            controller.remove(_COOKIE_NAME)
+        st.warning("Session expired. Please log in again.")
+        return None
+    _write_cookie(controller, refreshed)
+    return refreshed
 
 
 def _render_logged_out(settings: Settings) -> None:
@@ -113,7 +136,9 @@ def main() -> None:
     if "token" not in st.session_state:
         cookie_token = _read_cookie(controller)
         if cookie_token is not None:
-            st.session_state.token = cookie_token
+            refreshed = _maybe_refresh(cookie_token, settings, controller)
+            if refreshed is not None:
+                st.session_state.token = refreshed
 
     if "token" not in st.session_state:
         _handle_callback(settings, controller)
