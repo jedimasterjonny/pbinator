@@ -52,7 +52,8 @@ def _handle_callback(settings: Settings) -> None:
         return
 
     expected_state = st.session_state.get("oauth_state")
-    if params.get("state") != expected_state:
+    received_state = params.get("state")
+    if not expected_state or received_state != expected_state:
         st.error("Invalid OAuth state. Please log in again.")
         st.session_state.clear()
         st.query_params.clear()
