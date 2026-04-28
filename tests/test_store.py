@@ -208,3 +208,76 @@ def test_get_cursor_scopes_by_athlete(db_path: Path) -> None:
         conn.close()
 
     assert cursor is None
+
+
+def test_count_activities_returns_zero_when_empty(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        n = store.count_activities(conn, athlete_id=42)
+    finally:
+        conn.close()
+
+    assert n == 0
+
+
+def test_count_activities_scopes_by_athlete(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.upsert_activity(conn, athlete_id=1, activity=_summary_activity(activity_id=10))
+        store.upsert_activity(conn, athlete_id=1, activity=_summary_activity(activity_id=11))
+        store.upsert_activity(conn, athlete_id=2, activity=_summary_activity(activity_id=20))
+        a1 = store.count_activities(conn, athlete_id=1)
+        a2 = store.count_activities(conn, athlete_id=2)
+        a3 = store.count_activities(conn, athlete_id=3)
+    finally:
+        conn.close()
+
+    assert a1 == 2
+    assert a2 == 1
+    assert a3 == 0
+
+
+def test_delete_activities_not_in_removes_unseen_for_athlete(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        for activity_id in (1, 2, 3, 4):
+            store.upsert_activity(
+                conn, athlete_id=42, activity=_summary_activity(activity_id=activity_id)
+            )
+        # Athlete 99's row must NOT be touched.
+        store.upsert_activity(conn, athlete_id=99, activity=_summary_activity(activity_id=1))
+
+        deleted = store.delete_activities_not_in(conn, athlete_id=42, kept_ids={1, 3})
+        remaining = {
+            row["activity_id"]
+            for row in conn.execute(
+                "SELECT activity_id FROM activity WHERE athlete_id = ?",
+                (42,),
+            ).fetchall()
+        }
+        other_athlete = store.count_activities(conn, athlete_id=99)
+    finally:
+        conn.close()
+
+    assert deleted == 2
+    assert remaining == {1, 3}
+    assert other_athlete == 1
+
+
+def test_delete_activities_not_in_with_empty_kept_ids_clears_athlete(
+    db_path: Path,
+) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.upsert_activity(conn, athlete_id=42, activity=_summary_activity(activity_id=1))
+        store.upsert_activity(conn, athlete_id=99, activity=_summary_activity(activity_id=1))
+
+        deleted = store.delete_activities_not_in(conn, athlete_id=42, kept_ids=set())
+        a1 = store.count_activities(conn, athlete_id=42)
+        a2 = store.count_activities(conn, athlete_id=99)
+    finally:
+        conn.close()
+
+    assert deleted == 1
+    assert a1 == 0
+    assert a2 == 1
