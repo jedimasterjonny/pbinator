@@ -68,6 +68,7 @@ def _maybe_refresh(
     except httpx.HTTPError:
         if controller.get(_COOKIE_NAME) is not None:
             controller.remove(_COOKIE_NAME)
+        st.session_state.clear()
         st.warning("Session expired. Please log in again.")
         return None
     _write_cookie(controller, refreshed)
