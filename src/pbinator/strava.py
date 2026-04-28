@@ -1,11 +1,14 @@
 from typing import Any
 from urllib.parse import urlencode
 
+import httpx
 from pydantic import BaseModel
 
 from pbinator.settings import Settings
 
 _AUTHORIZE_URL = "https://www.strava.com/oauth/authorize"
+_TOKEN_URL = "https://www.strava.com/oauth/token"  # noqa: S105 — OAuth endpoint URL, not a credential
+_REQUEST_TIMEOUT_SECONDS = 10.0
 
 
 def build_authorize_url(settings: Settings, state: str) -> str:
@@ -23,6 +26,26 @@ def build_authorize_url(settings: Settings, state: str) -> str:
         "state": state,
     }
     return f"{_AUTHORIZE_URL}?{urlencode(params)}"
+
+
+def exchange_code(code: str, settings: Settings) -> "TokenPayload":
+    """Exchange an authorization code for a Strava access token.
+
+    Returns:
+        A populated ``TokenPayload`` with access/refresh tokens and athlete info.
+    """
+    response = httpx.post(
+        _TOKEN_URL,
+        data={
+            "client_id": settings.strava_client_id,
+            "client_secret": settings.strava_client_secret.get_secret_value(),
+            "code": code,
+            "grant_type": "authorization_code",
+        },
+        timeout=_REQUEST_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    return TokenPayload.from_strava_response(response.json())
 
 
 class TokenPayload(BaseModel):

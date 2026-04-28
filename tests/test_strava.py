@@ -1,10 +1,12 @@
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 import pytest
+import respx
 from pydantic import ValidationError
 
 from pbinator.settings import Settings
-from pbinator.strava import TokenPayload, build_authorize_url
+from pbinator.strava import TokenPayload, build_authorize_url, exchange_code
 
 
 def _strava_token_response() -> dict[str, object]:
@@ -79,3 +81,39 @@ def test_build_authorize_url_contains_required_params(
     assert params["approval_prompt"] == ["auto"]
     assert params["scope"] == ["activity:read"]
     assert params["state"] == ["csrf-abc"]
+
+
+@respx.mock
+def test_exchange_code_returns_token_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = _settings(monkeypatch)
+
+    route = respx.post("https://www.strava.com/oauth/token").mock(
+        return_value=httpx.Response(200, json=_strava_token_response()),
+    )
+
+    payload = exchange_code("auth-code-123", settings)
+
+    assert route.called
+    sent = route.calls.last.request
+    body = dict(httpx.QueryParams(sent.content.decode()))
+    assert body["client_id"] == "client-123"
+    assert body["client_secret"] == "secret-xyz"  # noqa: S105 — fixture value, not a real credential
+    assert body["code"] == "auth-code-123"
+    assert body["grant_type"] == "authorization_code"
+
+    assert payload.access_token == "access-abc"  # noqa: S105 — fixture value, not a real credential
+    assert payload.athlete_first_name == "Jane"
+
+
+@respx.mock
+def test_exchange_code_raises_on_http_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _settings(monkeypatch)
+
+    respx.post("https://www.strava.com/oauth/token").mock(
+        return_value=httpx.Response(400, json={"message": "Bad Request"}),
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        exchange_code("bad-code", settings)
