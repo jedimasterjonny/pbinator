@@ -56,3 +56,83 @@ def test_connect_creates_parent_directory(tmp_path: Path) -> None:
         assert nested.exists()
     finally:
         conn.close()
+
+
+def _summary_activity(  # noqa: PLR0913 — test helper builder
+    *,
+    activity_id: int = 100,
+    name: str = "Morning Run",
+    sport_type: str = "Run",
+    start_date: str = "2024-04-15T07:00:00Z",
+    distance: float = 5023.4,
+    moving_time: int = 1500,
+    elapsed_time: int = 1530,
+    total_elevation_gain: float = 47.0,
+) -> dict[str, object]:
+    """Minimal SummaryActivity-shaped dict for tests.
+
+    Returns:
+        A dict matching Strava SummaryActivity schema.
+    """
+    return {
+        "id": activity_id,
+        "name": name,
+        "sport_type": sport_type,
+        "start_date": start_date,
+        "distance": distance,
+        "moving_time": moving_time,
+        "elapsed_time": elapsed_time,
+        "total_elevation_gain": total_elevation_gain,
+        "extra_field": "ignored-but-kept-in-raw-json",
+    }
+
+
+def test_upsert_inserts_new_row(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.upsert_activity(conn, athlete_id=42, activity=_summary_activity())
+        row = conn.execute(
+            "SELECT * FROM activity WHERE athlete_id = ? AND activity_id = ?",
+            (42, 100),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row is not None
+    assert row["sport_type"] == "Run"
+    assert abs(row["distance_m"] - 5023.4) < 1e-9  # float equality
+    assert row["moving_time_s"] == 1500
+    assert "extra_field" in row["raw_json"]
+
+
+def test_upsert_overwrites_mutable_fields(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.upsert_activity(conn, athlete_id=42, activity=_summary_activity(name="Old"))
+        store.upsert_activity(
+            conn,
+            athlete_id=42,
+            activity=_summary_activity(name="Renamed", distance=6000.0),
+        )
+        rows = conn.execute(
+            "SELECT name, distance_m FROM activity WHERE athlete_id = ?",
+            (42,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(rows) == 1
+    assert rows[0]["name"] == "Renamed"
+    assert abs(rows[0]["distance_m"] - 6000.0) < 1e-9  # float equality
+
+
+def test_upsert_scopes_by_athlete(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.upsert_activity(conn, athlete_id=1, activity=_summary_activity(activity_id=5))
+        store.upsert_activity(conn, athlete_id=2, activity=_summary_activity(activity_id=5))
+        count = conn.execute("SELECT COUNT(*) FROM activity").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert count == 2  # same activity_id under different athletes is fine
