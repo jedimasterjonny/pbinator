@@ -48,6 +48,33 @@ def exchange_code(code: str, settings: Settings) -> "TokenPayload":
     return TokenPayload.from_strava_response(response.json())
 
 
+def refresh(token: "TokenPayload", settings: Settings) -> "TokenPayload":
+    """Refresh the access token, preserving athlete info from the input token.
+
+    Returns:
+        A new ``TokenPayload`` with rotated access/refresh tokens and expiry.
+    """
+    response = httpx.post(
+        _TOKEN_URL,
+        data={
+            "client_id": settings.strava_client_id,
+            "client_secret": settings.strava_client_secret.get_secret_value(),
+            "refresh_token": token.refresh_token,
+            "grant_type": "refresh_token",
+        },
+        timeout=_REQUEST_TIMEOUT_SECONDS,
+    )
+    response.raise_for_status()
+    body = response.json()
+    return token.model_copy(
+        update={
+            "access_token": body["access_token"],
+            "refresh_token": body["refresh_token"],
+            "expires_at": body["expires_at"],
+        },
+    )
+
+
 class TokenPayload(BaseModel):
     """Strava OAuth token + minimal athlete info, persisted to a cookie."""
 
