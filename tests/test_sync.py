@@ -10,7 +10,7 @@ from pbinator import store
 from pbinator.activities_api import RateLimitUsage
 from pbinator.settings import Settings
 from pbinator.strava import TokenPayload
-from pbinator.sync import SyncResult, max_iso, run, would_exceed_next_call
+from pbinator.sync import SyncResult, full_rescan, max_iso, run, would_exceed_next_call
 
 
 def test_sync_result_defaults_have_zero_counts() -> None:
@@ -311,6 +311,265 @@ def test_run_progress_callback_invoked_per_page(
     conn = store.connect(db_path)
     try:
         run(_token(), settings, conn, on_page=lambda p, n: seen.append((p, n)))
+    finally:
+        conn.close()
+
+    assert seen == [(1, 1)]
+
+
+@respx.mock
+def test_full_rescan_clean_run_reconciles_deletions(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    conn = store.connect(db_path)
+    try:
+        with conn:  # commit setup so full_rescan's connection can see it
+            for activity_id in (1, 2, 3, 99):
+                store.upsert_activity(
+                    conn,
+                    athlete_id=42,
+                    activity=_activity(activity_id, "2024-04-15T07:00:00Z"),
+                )
+            # Other athlete must remain untouched.
+            store.upsert_activity(
+                conn,
+                athlete_id=999,
+                activity=_activity(1, "2024-04-15T07:00:00Z"),
+            )
+    finally:
+        conn.close()
+
+    respx.get(_ACTIVITIES_URL).mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                headers=_ok_headers(),
+                json=[
+                    _activity(1, "2024-04-15T07:00:00Z"),
+                    _activity(2, "2024-04-16T07:00:00Z"),
+                ],
+            ),
+            httpx.Response(200, headers=_ok_headers(), json=[]),
+        ]
+    )
+
+    conn = store.connect(db_path)
+    try:
+        result = full_rescan(_token(), settings, conn)
+        remaining_42 = {
+            row["activity_id"]
+            for row in conn.execute(
+                "SELECT activity_id FROM activity WHERE athlete_id = ?",
+                (42,),
+            ).fetchall()
+        }
+        other_count = store.count_activities(conn, athlete_id=999)
+    finally:
+        conn.close()
+
+    assert result.error is None
+    assert result.rate_limited is False
+    assert result.deleted == 2  # 3 and 99 were not in seen_ids
+    assert remaining_42 == {1, 2}
+    assert other_count == 1
+
+
+@respx.mock
+def test_full_rescan_truncated_does_not_reconcile(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    conn = store.connect(db_path)
+    try:
+        with conn:  # commit setup
+            for activity_id in (1, 2, 3, 99):
+                store.upsert_activity(
+                    conn,
+                    athlete_id=42,
+                    activity=_activity(activity_id, "2024-04-15T07:00:00Z"),
+                )
+    finally:
+        conn.close()
+
+    respx.get(_ACTIVITIES_URL).mock(
+        return_value=httpx.Response(
+            200,
+            headers=_ok_headers(short_used=99),  # preflight trips immediately
+            json=[_activity(1, "2024-04-15T07:00:00Z")],
+        )
+    )
+
+    conn = store.connect(db_path)
+    try:
+        result = full_rescan(_token(), settings, conn)
+        count = store.count_activities(conn, athlete_id=42)
+    finally:
+        conn.close()
+
+    assert result.rate_limited is True
+    assert result.deleted == 0
+    assert count == 4  # nothing was reconciled away
+
+
+@respx.mock
+def test_full_rescan_empty_first_page_does_not_wipe_db(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    conn = store.connect(db_path)
+    try:
+        with conn:  # commit setup
+            store.upsert_activity(
+                conn,
+                athlete_id=42,
+                activity=_activity(1, "2024-04-15T07:00:00Z"),
+            )
+    finally:
+        conn.close()
+
+    respx.get(_ACTIVITIES_URL).mock(
+        return_value=httpx.Response(200, headers=_ok_headers(), json=[])
+    )
+
+    conn = store.connect(db_path)
+    try:
+        result = full_rescan(_token(), settings, conn)
+        count = store.count_activities(conn, athlete_id=42)
+    finally:
+        conn.close()
+
+    assert result.error is None
+    assert result.rate_limited is False
+    assert result.deleted == 0
+    assert count == 1  # safety belt: empty first page DOES NOT trigger reconcile
+
+
+@respx.mock
+def test_full_rescan_error_does_not_reconcile(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    conn = store.connect(db_path)
+    try:
+        with conn:  # commit setup
+            store.upsert_activity(
+                conn,
+                athlete_id=42,
+                activity=_activity(1, "2024-04-15T07:00:00Z"),
+            )
+    finally:
+        conn.close()
+
+    respx.get(_ACTIVITIES_URL).mock(
+        return_value=httpx.Response(500, headers=_ok_headers(), json={})
+    )
+
+    conn = store.connect(db_path)
+    try:
+        result = full_rescan(_token(), settings, conn)
+        count = store.count_activities(conn, athlete_id=42)
+    finally:
+        conn.close()
+
+    assert result.error == "http_error"
+    assert result.deleted == 0
+    assert count == 1
+
+
+@respx.mock
+def test_full_rescan_auth_error_does_not_reconcile(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    conn = store.connect(db_path)
+    try:
+        with conn:
+            store.upsert_activity(
+                conn,
+                athlete_id=42,
+                activity=_activity(1, "2024-04-15T07:00:00Z"),
+            )
+    finally:
+        conn.close()
+
+    respx.get(_ACTIVITIES_URL).mock(
+        return_value=httpx.Response(401, headers=_ok_headers(), json={})
+    )
+
+    conn = store.connect(db_path)
+    try:
+        result = full_rescan(_token(), settings, conn)
+        count = store.count_activities(conn, athlete_id=42)
+    finally:
+        conn.close()
+
+    assert result.error == "auth_failed"
+    assert result.deleted == 0
+    assert count == 1
+
+
+@respx.mock
+def test_full_rescan_rate_limited_429_does_not_reconcile(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    conn = store.connect(db_path)
+    try:
+        with conn:
+            for activity_id in (1, 2):
+                store.upsert_activity(
+                    conn,
+                    athlete_id=42,
+                    activity=_activity(activity_id, "2024-04-15T07:00:00Z"),
+                )
+    finally:
+        conn.close()
+
+    respx.get(_ACTIVITIES_URL).mock(
+        return_value=httpx.Response(
+            429,
+            headers={
+                "X-ReadRateLimit-Limit": "100,1000",
+                "X-ReadRateLimit-Usage": "100,500",
+            },
+            json={},
+        )
+    )
+
+    conn = store.connect(db_path)
+    try:
+        result = full_rescan(_token(), settings, conn)
+        count = store.count_activities(conn, athlete_id=42)
+    finally:
+        conn.close()
+
+    assert result.rate_limited is True
+    assert result.error is None
+    assert result.deleted == 0
+    assert count == 2
+
+
+@respx.mock
+def test_full_rescan_progress_callback_invoked_per_page(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    respx.get(_ACTIVITIES_URL).mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                headers=_ok_headers(),
+                json=[_activity(1, "2024-04-15T07:00:00Z")],
+            ),
+            httpx.Response(200, headers=_ok_headers(), json=[]),
+        ]
+    )
+    seen: list[tuple[int, int]] = []
+
+    conn = store.connect(db_path)
+    try:
+        full_rescan(_token(), settings, conn, on_page=lambda p, n: seen.append((p, n)))
     finally:
         conn.close()
 
