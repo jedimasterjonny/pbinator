@@ -162,3 +162,46 @@ def update_cursor(
             "last_synced_at": last_synced_at,
         },
     )
+
+
+def count_activities(conn: sqlite3.Connection, athlete_id: int) -> int:
+    """Return the number of stored activities for ``athlete_id``.
+
+    Returns:
+        The row count, scoped to that athlete.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM activity WHERE athlete_id = ?",
+        (athlete_id,),
+    ).fetchone()
+    return int(row["n"])
+
+
+def delete_activities_not_in(
+    conn: sqlite3.Connection,
+    *,
+    athlete_id: int,
+    kept_ids: set[int],
+) -> int:
+    """Delete this athlete's activities whose id is NOT in ``kept_ids``.
+
+    Returns:
+        The number of rows deleted.
+
+    Notes:
+        Building a parameterised IN-clause SQL string from a set of ints is safe
+        because every value is coerced to int before substitution, and SQLite's
+        IN-clause has no parameter-list shortcut for arbitrary-length lists.
+    """
+    if not kept_ids:
+        cursor = conn.execute(
+            "DELETE FROM activity WHERE athlete_id = ?",
+            (athlete_id,),
+        )
+        return cursor.rowcount
+
+    placeholders = ",".join("?" * len(kept_ids))
+    # placeholders is ?,… only; values pass via parameters
+    sql = f"DELETE FROM activity WHERE athlete_id = ? AND activity_id NOT IN ({placeholders})"  # noqa: S608
+    cursor = conn.execute(sql, (athlete_id, *(int(i) for i in kept_ids)))
+    return cursor.rowcount
