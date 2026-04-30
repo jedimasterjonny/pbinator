@@ -82,6 +82,7 @@ def test_would_exceed_respects_custom_margin() -> None:
 
 
 _ACTIVITIES_URL = "https://www.strava.com/api/v3/athlete/activities"
+_DETAIL_URL = "https://www.strava.com/api/v3/activities/{}"
 
 
 @pytest.fixture
@@ -144,6 +145,10 @@ def test_run_cold_start_paginates_until_empty(
             httpx.Response(200, headers=_ok_headers(), json=[]),
         ]
     )
+    for aid in (1, 2, 3):
+        respx.get(_DETAIL_URL.format(aid)).mock(
+            return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
+        )
 
     conn = store.connect(db_path)
     try:
@@ -212,6 +217,12 @@ def test_run_breaks_when_rate_limit_preflight_trips(
             # third call should not happen — preflight after page 2 trips
             httpx.Response(200, headers=_ok_headers(), json=[]),
         ]
+    )
+    # page 1 detail fetch succeeds; page 2 detail fetch is skipped by budget check
+    respx.get(_DETAIL_URL.format(1)).mock(
+        return_value=httpx.Response(
+            200, headers=_ok_headers(short_used=50), json={"best_efforts": []}
+        )
     )
 
     conn = store.connect(db_path)
@@ -307,6 +318,9 @@ def test_run_progress_callback_invoked_per_page(
             httpx.Response(200, headers=_ok_headers(), json=[]),
         ]
     )
+    respx.get(_DETAIL_URL.format(1)).mock(
+        return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
+    )
     seen: list[tuple[int, int]] = []
 
     conn = store.connect(db_path)
@@ -354,6 +368,10 @@ def test_full_rescan_clean_run_reconciles_deletions(
             httpx.Response(200, headers=_ok_headers(), json=[]),
         ]
     )
+    for aid in (1, 2):
+        respx.get(_DETAIL_URL.format(aid)).mock(
+            return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
+        )
 
     conn = store.connect(db_path)
     try:
@@ -602,6 +620,9 @@ def test_full_rescan_progress_callback_invoked_per_page(
             httpx.Response(200, headers=_ok_headers(), json=[]),
         ]
     )
+    respx.get(_DETAIL_URL.format(1)).mock(
+        return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
+    )
     seen: list[tuple[int, int]] = []
 
     conn = store.connect(db_path)
@@ -611,3 +632,333 @@ def test_full_rescan_progress_callback_invoked_per_page(
         conn.close()
 
     assert seen == [(1, 1)]
+
+
+@respx.mock
+def test_run_fetches_best_efforts_for_each_run(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    page1 = [_activity(1, "2024-04-15T07:00:00Z"), _activity(2, "2024-04-16T07:00:00Z")]
+    respx.get(_ACTIVITIES_URL).mock(
+        side_effect=[
+            httpx.Response(200, headers=_ok_headers(), json=page1),
+            httpx.Response(200, headers=_ok_headers(), json=[]),
+        ]
+    )
+    detail_body = {
+        "id": 1,
+        "best_efforts": [
+            {
+                "name": "5k",
+                "distance": 5000.0,
+                "moving_time": 1100,
+                "elapsed_time": 1101,
+                "start_date": "2024-04-15T07:30:00Z",
+            },
+        ],
+    }
+    detail1 = respx.get(_DETAIL_URL.format(1)).mock(
+        return_value=httpx.Response(200, headers=_ok_headers(), json=detail_body)
+    )
+    detail2 = respx.get(_DETAIL_URL.format(2)).mock(
+        return_value=httpx.Response(200, headers=_ok_headers(), json={"id": 2, "best_efforts": []})
+    )
+
+    conn = store.connect(db_path)
+    try:
+        result = run(_token(), settings, conn)
+        rows = conn.execute(
+            "SELECT activity_id, distance_label, moving_time_s FROM best_effort "
+            "WHERE athlete_id = 42 ORDER BY activity_id",
+        ).fetchall()
+        flags = conn.execute(
+            "SELECT activity_id, best_efforts_fetched_at FROM activity "
+            "WHERE athlete_id = 42 ORDER BY activity_id",
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert result.error is None
+    assert detail1.called
+    assert detail2.called
+    assert [(r["activity_id"], r["distance_label"]) for r in rows] == [(1, "5k")]
+    assert all(row["best_efforts_fetched_at"] is not None for row in flags)
+
+
+@respx.mock
+def test_run_skips_detail_fetch_for_non_run_sport_types(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    ride = _activity(1, "2024-04-15T07:00:00Z")
+    ride["sport_type"] = "Ride"
+    respx.get(_ACTIVITIES_URL).mock(
+        side_effect=[
+            httpx.Response(200, headers=_ok_headers(), json=[ride]),
+            httpx.Response(200, headers=_ok_headers(), json=[]),
+        ]
+    )
+    detail_route = respx.get(_DETAIL_URL.format(1)).mock(
+        return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
+    )
+
+    conn = store.connect(db_path)
+    try:
+        run(_token(), settings, conn)
+        flag = conn.execute(
+            "SELECT best_efforts_fetched_at FROM activity WHERE activity_id = 1",
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert detail_route.called is False
+    assert flag["best_efforts_fetched_at"] is None
+
+
+@respx.mock
+def test_run_skips_detail_fetch_for_already_fetched_runs(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    conn = store.connect(db_path)
+    try:
+        with conn:
+            store.upsert_activity(
+                conn, athlete_id=42, activity=_activity(1, "2024-04-15T07:00:00Z")
+            )
+            store.mark_detail_fetched(
+                conn, athlete_id=42, activity_id=1, fetched_at="2024-04-15T08:00:00+00:00"
+            )
+    finally:
+        conn.close()
+
+    respx.get(_ACTIVITIES_URL).mock(
+        side_effect=[
+            httpx.Response(200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]),
+            httpx.Response(200, headers=_ok_headers(), json=[]),
+        ]
+    )
+    detail_route = respx.get(_DETAIL_URL.format(1)).mock(
+        return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
+    )
+
+    conn = store.connect(db_path)
+    try:
+        run(_token(), settings, conn)
+    finally:
+        conn.close()
+
+    assert detail_route.called is False
+
+
+@respx.mock
+def test_run_returns_auth_failed_when_detail_fetch_returns_401(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    respx.get(_ACTIVITIES_URL).mock(
+        return_value=httpx.Response(
+            200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]
+        )
+    )
+    respx.get(_DETAIL_URL.format(1)).mock(
+        return_value=httpx.Response(401, headers=_ok_headers(), json={})
+    )
+
+    conn = store.connect(db_path)
+    try:
+        result = run(_token(), settings, conn)
+    finally:
+        conn.close()
+
+    assert result.error == "auth_failed"
+
+
+@respx.mock
+def test_run_returns_http_error_when_detail_fetch_returns_5xx(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    respx.get(_ACTIVITIES_URL).mock(
+        return_value=httpx.Response(
+            200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]
+        )
+    )
+    respx.get(_DETAIL_URL.format(1)).mock(
+        return_value=httpx.Response(500, headers=_ok_headers(), json={})
+    )
+
+    conn = store.connect(db_path)
+    try:
+        result = run(_token(), settings, conn)
+    finally:
+        conn.close()
+
+    assert result.error == "http_error"
+
+
+@respx.mock
+def test_run_stops_when_detail_fetch_would_exceed_rate_limit(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    respx.get(_ACTIVITIES_URL).mock(
+        return_value=httpx.Response(
+            200,
+            headers=_ok_headers(short_used=50),
+            json=[_activity(1, "2024-04-15T07:00:00Z"), _activity(2, "2024-04-16T07:00:00Z")],
+        )
+    )
+    detail1 = respx.get(_DETAIL_URL.format(1)).mock(
+        return_value=httpx.Response(
+            200,
+            headers=_ok_headers(short_used=99),
+            json={"best_efforts": []},
+        )
+    )
+    detail2 = respx.get(_DETAIL_URL.format(2)).mock(
+        return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
+    )
+
+    conn = store.connect(db_path)
+    try:
+        result = run(_token(), settings, conn)
+        flags = conn.execute(
+            "SELECT activity_id, best_efforts_fetched_at FROM activity ORDER BY activity_id",
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert result.rate_limited is True
+    assert detail1.called is True
+    assert detail2.called is False
+    assert flags[0]["best_efforts_fetched_at"] is not None
+    assert flags[1]["best_efforts_fetched_at"] is None
+
+
+@respx.mock
+def test_run_rate_limited_429_on_detail_fetch_returns_rate_limited(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    respx.get(_ACTIVITIES_URL).mock(
+        return_value=httpx.Response(
+            200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]
+        )
+    )
+    respx.get(_DETAIL_URL.format(1)).mock(
+        return_value=httpx.Response(
+            429,
+            headers={
+                "X-ReadRateLimit-Limit": "100,1000",
+                "X-ReadRateLimit-Usage": "100,500",
+            },
+            json={},
+        )
+    )
+
+    conn = store.connect(db_path)
+    try:
+        result = run(_token(), settings, conn)
+        flag = conn.execute(
+            "SELECT best_efforts_fetched_at FROM activity WHERE activity_id = 1",
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert result.rate_limited is True
+    assert flag["best_efforts_fetched_at"] is None
+
+
+@respx.mock
+def test_full_rescan_also_fetches_best_efforts(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    settings = _settings(tmp_path, monkeypatch)
+    respx.get(_ACTIVITIES_URL).mock(
+        side_effect=[
+            httpx.Response(200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]),
+            httpx.Response(200, headers=_ok_headers(), json=[]),
+        ]
+    )
+    detail = respx.get(_DETAIL_URL.format(1)).mock(
+        return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
+    )
+
+    conn = store.connect(db_path)
+    try:
+        result = full_rescan(_token(), settings, conn)
+    finally:
+        conn.close()
+
+    assert detail.called is True
+    assert result.error is None
+
+
+@respx.mock
+def test_run_rate_limited_after_detail_exhausts_budget(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Detail fetch drains the budget; post-helper would_exceed_next_call trips."""
+    settings = _settings(tmp_path, monkeypatch)
+    respx.get(_ACTIVITIES_URL).mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                headers=_ok_headers(short_used=5),
+                json=[_activity(1, "2024-04-15T07:00:00Z")],
+            ),
+            # second page would be fetched if not rate-limited
+            httpx.Response(200, headers=_ok_headers(), json=[]),
+        ]
+    )
+    # detail fetch uses up the budget
+    respx.get(_DETAIL_URL.format(1)).mock(
+        return_value=httpx.Response(
+            200, headers=_ok_headers(short_used=99), json={"best_efforts": []}
+        )
+    )
+
+    conn = store.connect(db_path)
+    try:
+        result = run(_token(), settings, conn)
+    finally:
+        conn.close()
+
+    assert result.rate_limited is True
+    assert result.error is None
+
+
+@respx.mock
+def test_full_rescan_rate_limited_after_detail_exhausts_budget(
+    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Detail fetch drains the budget; post-helper would_exceed_next_call trips."""
+    settings = _settings(tmp_path, monkeypatch)
+    respx.get(_ACTIVITIES_URL).mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                headers=_ok_headers(short_used=5),
+                json=[_activity(1, "2024-04-15T07:00:00Z")],
+            ),
+            # second page would be fetched if not rate-limited
+            httpx.Response(200, headers=_ok_headers(), json=[]),
+        ]
+    )
+    # detail fetch uses up the budget
+    respx.get(_DETAIL_URL.format(1)).mock(
+        return_value=httpx.Response(
+            200, headers=_ok_headers(short_used=99), json={"best_efforts": []}
+        )
+    )
+
+    conn = store.connect(db_path)
+    try:
+        result = full_rescan(_token(), settings, conn)
+    finally:
+        conn.close()
+
+    assert result.rate_limited is True
+    assert result.error is None
