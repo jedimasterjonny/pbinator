@@ -41,6 +41,19 @@ CREATE TABLE IF NOT EXISTS sync_cursor (
 """
 
 
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    """Idempotent ALTER TABLE … ADD COLUMN guarded by PRAGMA table_info.
+
+    SQLite raises if the column already exists; this skips that path so
+    ``connect`` can re-run safely on an already-upgraded database.
+    """
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        # Both `table` and `column` come from internal hardcoded calls; no
+        # user-controlled SQL.
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+
+
 def connect(path: Path) -> sqlite3.Connection:
     """Open the pbinator SQLite database, bootstrapping the schema if needed.
 
@@ -54,22 +67,30 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_SCHEMA_SQL)
+    _add_column_if_missing(conn, "activity", "start_date_local", "TEXT")
+    with conn:
+        conn.execute(
+            "UPDATE activity "
+            "SET start_date_local = json_extract(raw_json, '$.start_date_local') "
+            "WHERE start_date_local IS NULL"
+        )
     return conn
 
 
 _UPSERT_ACTIVITY_SQL = """
 INSERT INTO activity (
-    athlete_id, activity_id, sport_type, start_date,
+    athlete_id, activity_id, sport_type, start_date, start_date_local,
     distance_m, moving_time_s, elapsed_time_s, total_elev_gain_m,
     name, raw_json, fetched_at
 ) VALUES (
-    :athlete_id, :activity_id, :sport_type, :start_date,
+    :athlete_id, :activity_id, :sport_type, :start_date, :start_date_local,
     :distance_m, :moving_time_s, :elapsed_time_s, :total_elev_gain_m,
     :name, :raw_json, :fetched_at
 )
 ON CONFLICT(athlete_id, activity_id) DO UPDATE SET
     sport_type        = excluded.sport_type,
     start_date        = excluded.start_date,
+    start_date_local  = excluded.start_date_local,
     distance_m        = excluded.distance_m,
     moving_time_s     = excluded.moving_time_s,
     elapsed_time_s    = excluded.elapsed_time_s,
@@ -94,6 +115,7 @@ def upsert_activity(
             "activity_id": int(activity["id"]),
             "sport_type": str(activity["sport_type"]),
             "start_date": str(activity["start_date"]),
+            "start_date_local": str(activity["start_date_local"]),
             "distance_m": float(activity["distance"]),
             "moving_time_s": int(activity["moving_time"]),
             "elapsed_time_s": int(activity["elapsed_time"]),

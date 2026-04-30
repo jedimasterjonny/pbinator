@@ -1,3 +1,4 @@
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -63,6 +64,7 @@ def _summary_activity(  # noqa: PLR0913 — test helper builder
     name: str = "Morning Run",
     sport_type: str = "Run",
     start_date: str = "2024-04-15T07:00:00Z",
+    start_date_local: str = "2024-04-15T08:00:00",
     distance: float = 5023.4,
     moving_time: int = 1500,
     elapsed_time: int = 1530,
@@ -78,6 +80,7 @@ def _summary_activity(  # noqa: PLR0913 — test helper builder
         "name": name,
         "sport_type": sport_type,
         "start_date": start_date,
+        "start_date_local": start_date_local,
         "distance": distance,
         "moving_time": moving_time,
         "elapsed_time": elapsed_time,
@@ -290,3 +293,125 @@ def test_connect_enables_foreign_keys(db_path: Path) -> None:
         conn.close()
 
     assert row[0] == 1
+
+
+def test_upsert_writes_start_date_local(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.upsert_activity(
+            conn,
+            athlete_id=42,
+            activity={
+                "id": 1,
+                "name": "Run",
+                "sport_type": "Run",
+                "start_date": "2024-04-15T07:00:00Z",
+                "start_date_local": "2024-04-15T08:00:00",
+                "distance": 5000.0,
+                "moving_time": 1500,
+                "elapsed_time": 1530,
+                "total_elevation_gain": 0.0,
+            },
+        )
+        row = conn.execute(
+            "SELECT start_date_local FROM activity WHERE activity_id = 1",
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row["start_date_local"] == "2024-04-15T08:00:00"
+
+
+def test_connect_backfills_start_date_local_from_raw_json(db_path: Path) -> None:
+    """A pre-upgrade row (no start_date_local column at insert time) gets backfilled."""
+    # Build a database with the *old* schema so we can simulate the upgrade.
+    path_str = str(db_path)
+    legacy = sqlite3.connect(path_str)
+    try:
+        legacy.executescript(
+            """
+            CREATE TABLE activity (
+                athlete_id        INTEGER NOT NULL,
+                activity_id       INTEGER NOT NULL,
+                sport_type        TEXT    NOT NULL,
+                start_date        TEXT    NOT NULL,
+                distance_m        REAL    NOT NULL,
+                moving_time_s     INTEGER NOT NULL,
+                elapsed_time_s    INTEGER NOT NULL,
+                total_elev_gain_m REAL    NOT NULL,
+                name              TEXT    NOT NULL,
+                raw_json          TEXT    NOT NULL,
+                fetched_at        TEXT    NOT NULL,
+                PRIMARY KEY (athlete_id, activity_id)
+            );
+            """
+        )
+        legacy.execute(
+            "INSERT INTO activity VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                42,
+                1,
+                "Run",
+                "2024-04-15T07:00:00Z",
+                5000.0,
+                1500,
+                1530,
+                0.0,
+                "Run",
+                '{"start_date_local":"2024-04-15T08:00:00"}',
+                "2024-04-15T08:00:30+00:00",
+            ),
+        )
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    conn = store.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT start_date_local FROM activity WHERE activity_id = 1",
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row["start_date_local"] == "2024-04-15T08:00:00"
+
+
+def test_connect_does_not_overwrite_existing_start_date_local(db_path: Path) -> None:
+    """Backfill only fills NULLs — already-set values are left alone."""
+    conn = store.connect(db_path)
+    try:
+        store.upsert_activity(
+            conn,
+            athlete_id=42,
+            activity={
+                "id": 1,
+                "name": "Run",
+                "sport_type": "Run",
+                "start_date": "2024-04-15T07:00:00Z",
+                "start_date_local": "2024-04-15T08:00:00",
+                "distance": 5000.0,
+                "moving_time": 1500,
+                "elapsed_time": 1530,
+                "total_elevation_gain": 0.0,
+            },
+        )
+        # Tamper raw_json so a re-backfill would change the stored value.
+        with conn:
+            conn.execute(
+                "UPDATE activity SET raw_json = ? WHERE activity_id = 1",
+                ('{"start_date_local":"1999-01-01T00:00:00"}',),
+            )
+    finally:
+        conn.close()
+
+    # Reopen — connect() runs the backfill again. Existing value must survive.
+    conn = store.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT start_date_local FROM activity WHERE activity_id = 1",
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row["start_date_local"] == "2024-04-15T08:00:00"
