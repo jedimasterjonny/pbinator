@@ -110,7 +110,24 @@ def _format_resume_message(usage: RateLimitUsage | None) -> str:
     return f"Try again at {next_reset.strftime('%H:%M')} UTC."
 
 
-def _render_sync_result(result: SyncResult, controller: CookieController) -> None:
+def _backfill_suffix(conn: sqlite3.Connection, athlete_id: int) -> str:
+    """Suffix showing count of runs awaiting detail; empty if none.
+
+    Returns:
+        A string like " N Runs still awaiting detail." or "" if none.
+    """
+    awaiting = store.count_runs_awaiting_detail(conn, athlete_id=athlete_id)
+    if awaiting == 0:
+        return ""
+    return f" {awaiting} Runs still awaiting detail."
+
+
+def _render_sync_result(
+    result: SyncResult,
+    controller: CookieController,
+    conn: sqlite3.Connection,
+    athlete_id: int,
+) -> None:
     if result.error == "auth_failed":
         st.error("Session expired — please log in again.")
         if controller.get(_COOKIE_NAME) is not None:
@@ -120,6 +137,7 @@ def _render_sync_result(result: SyncResult, controller: CookieController) -> Non
     if result.error == "http_error":
         st.error("Sync failed. Please try again.")
         return
+    suffix = _backfill_suffix(conn, athlete_id)
     if result.rate_limited:
         st.warning(
             f"Rate-limited after {result.inserted_or_updated} activities. "
@@ -129,10 +147,10 @@ def _render_sync_result(result: SyncResult, controller: CookieController) -> Non
     if result.deleted:
         st.success(
             f"Synced {result.inserted_or_updated} activities; "
-            f"removed {result.deleted} no longer on Strava."
+            f"removed {result.deleted} no longer on Strava.{suffix}"
         )
         return
-    st.success(f"Synced {result.inserted_or_updated} new activities.")
+    st.success(f"Synced {result.inserted_or_updated} new activities.{suffix}")
 
 
 def _run_sync_with_status(
@@ -200,7 +218,7 @@ def _render_logged_in(
             # count display at the top is stale until the next interaction;
             # that's an acceptable trade-off for v1.
             result = _run_sync_with_status(token, settings, db_conn, full=clicked_rescan)
-            _render_sync_result(result, controller)
+            _render_sync_result(result, controller, db_conn, token.athlete_id)
             if result.error == "auth_failed":
                 # Cookie was cleared inside _render_sync_result; rerun so
                 # the logged-out view renders cleanly.
