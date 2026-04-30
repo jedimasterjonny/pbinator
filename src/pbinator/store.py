@@ -282,9 +282,9 @@ def upsert_best_efforts(
         activity_id: The activity's ID.
         efforts: Sequence of BestEffortRow instances to insert or update.
     """
-    for effort in efforts:
-        conn.execute(
-            _UPSERT_BEST_EFFORT_SQL,
+    conn.executemany(
+        _UPSERT_BEST_EFFORT_SQL,
+        [
             {
                 "athlete_id": athlete_id,
                 "activity_id": activity_id,
@@ -293,8 +293,10 @@ def upsert_best_efforts(
                 "moving_time_s": effort.moving_time_s,
                 "elapsed_time_s": effort.elapsed_time_s,
                 "start_date": effort.start_date,
-            },
-        )
+            }
+            for effort in efforts
+        ],
+    )
 
 
 def mark_detail_fetched(
