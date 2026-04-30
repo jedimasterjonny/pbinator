@@ -6,10 +6,13 @@ No Streamlit, no env reads, no global state.
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from pbinator.best_efforts import BestEffortRow
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS activity (
@@ -246,3 +249,78 @@ def delete_activities_not_in(
     sql = f"DELETE FROM activity WHERE athlete_id = ? AND activity_id NOT IN ({placeholders})"  # noqa: S608
     cursor = conn.execute(sql, (athlete_id, *(int(i) for i in kept_ids)))
     return cursor.rowcount
+
+
+_UPSERT_BEST_EFFORT_SQL = """
+INSERT INTO best_effort (
+    athlete_id, activity_id, distance_label,
+    distance_m, moving_time_s, elapsed_time_s, start_date
+) VALUES (
+    :athlete_id, :activity_id, :distance_label,
+    :distance_m, :moving_time_s, :elapsed_time_s, :start_date
+)
+ON CONFLICT(athlete_id, activity_id, distance_label) DO UPDATE SET
+    distance_m     = excluded.distance_m,
+    moving_time_s  = excluded.moving_time_s,
+    elapsed_time_s = excluded.elapsed_time_s,
+    start_date     = excluded.start_date
+"""
+
+
+def upsert_best_efforts(
+    conn: sqlite3.Connection,
+    *,
+    athlete_id: int,
+    activity_id: int,
+    efforts: Sequence[BestEffortRow],
+) -> None:
+    """Insert or update one activity's set of best_effort rows.
+
+    Args:
+        conn: SQLite connection.
+        athlete_id: The athlete's ID.
+        activity_id: The activity's ID.
+        efforts: Sequence of BestEffortRow instances to insert or update.
+    """
+    for effort in efforts:
+        conn.execute(
+            _UPSERT_BEST_EFFORT_SQL,
+            {
+                "athlete_id": athlete_id,
+                "activity_id": activity_id,
+                "distance_label": effort.distance_label,
+                "distance_m": effort.distance_m,
+                "moving_time_s": effort.moving_time_s,
+                "elapsed_time_s": effort.elapsed_time_s,
+                "start_date": effort.start_date,
+            },
+        )
+
+
+def mark_detail_fetched(
+    conn: sqlite3.Connection,
+    *,
+    athlete_id: int,
+    activity_id: int,
+    fetched_at: str,
+) -> None:
+    """Stamp ``best_efforts_fetched_at`` on one activity row."""
+    conn.execute(
+        "UPDATE activity SET best_efforts_fetched_at = ? WHERE athlete_id = ? AND activity_id = ?",
+        (fetched_at, athlete_id, activity_id),
+    )
+
+
+def count_runs_awaiting_detail(conn: sqlite3.Connection, athlete_id: int) -> int:
+    """Return the count of Run activities for ``athlete_id`` lacking detail.
+
+    Returns:
+        Integer count.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM activity "
+        "WHERE athlete_id = ? AND sport_type = 'Run' "
+        "AND best_efforts_fetched_at IS NULL",
+        (athlete_id,),
+    ).fetchone()
+    return int(row["n"])

@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from pbinator import store
+from pbinator.best_efforts import BestEffortRow
 
 
 @pytest.fixture
@@ -498,3 +499,155 @@ def test_connect_adds_best_efforts_fetched_at_to_existing_db(db_path: Path) -> N
         conn.close()
 
     assert row["best_efforts_fetched_at"] is None
+
+
+def _best_effort_row(label: str = "5k", time_s: int = 1100) -> BestEffortRow:
+    return BestEffortRow(
+        distance_label=label,
+        distance_m=5000.0,
+        moving_time_s=time_s,
+        elapsed_time_s=time_s + 1,
+        start_date="2024-04-15T07:30:00Z",
+    )
+
+
+def test_upsert_best_efforts_inserts_rows(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.upsert_activity(conn, athlete_id=42, activity=_summary_activity(activity_id=1))
+        store.upsert_best_efforts(
+            conn,
+            athlete_id=42,
+            activity_id=1,
+            efforts=[_best_effort_row("1k", 200), _best_effort_row("5k", 1100)],
+        )
+        rows = conn.execute(
+            "SELECT distance_label, moving_time_s FROM best_effort "
+            "WHERE athlete_id = 42 AND activity_id = 1 "
+            "ORDER BY distance_label",
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert [(r["distance_label"], r["moving_time_s"]) for r in rows] == [
+        ("1k", 200),
+        ("5k", 1100),
+    ]
+
+
+def test_upsert_best_efforts_replaces_on_conflict(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.upsert_activity(conn, athlete_id=42, activity=_summary_activity(activity_id=1))
+        store.upsert_best_efforts(
+            conn, athlete_id=42, activity_id=1, efforts=[_best_effort_row("5k", 1100)]
+        )
+        store.upsert_best_efforts(
+            conn, athlete_id=42, activity_id=1, efforts=[_best_effort_row("5k", 1080)]
+        )
+        rows = conn.execute(
+            "SELECT moving_time_s FROM best_effort WHERE activity_id = 1",
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert len(rows) == 1
+    assert rows[0]["moving_time_s"] == 1080
+
+
+def test_upsert_best_efforts_with_empty_list_is_noop(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.upsert_activity(conn, athlete_id=42, activity=_summary_activity(activity_id=1))
+        store.upsert_best_efforts(conn, athlete_id=42, activity_id=1, efforts=[])
+        n = conn.execute(
+            "SELECT COUNT(*) AS n FROM best_effort WHERE activity_id = 1",
+        ).fetchone()["n"]
+    finally:
+        conn.close()
+
+    assert n == 0
+
+
+def test_mark_detail_fetched_sets_timestamp(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.upsert_activity(conn, athlete_id=42, activity=_summary_activity(activity_id=1))
+        store.mark_detail_fetched(
+            conn,
+            athlete_id=42,
+            activity_id=1,
+            fetched_at="2024-05-01T08:00:00+00:00",
+        )
+        row = conn.execute(
+            "SELECT best_efforts_fetched_at FROM activity WHERE activity_id = 1",
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row["best_efforts_fetched_at"] == "2024-05-01T08:00:00+00:00"
+
+
+def test_count_runs_awaiting_detail_zero_initially(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        n = store.count_runs_awaiting_detail(conn, athlete_id=42)
+    finally:
+        conn.close()
+
+    assert n == 0
+
+
+def test_count_runs_awaiting_detail_counts_only_unfetched_runs(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.upsert_activity(conn, athlete_id=42, activity=_summary_activity(activity_id=1))
+        store.upsert_activity(conn, athlete_id=42, activity=_summary_activity(activity_id=2))
+        store.upsert_activity(
+            conn, athlete_id=42, activity=_summary_activity(activity_id=3, sport_type="Ride")
+        )
+        store.mark_detail_fetched(
+            conn, athlete_id=42, activity_id=1, fetched_at="2024-05-01T08:00:00+00:00"
+        )
+
+        n = store.count_runs_awaiting_detail(conn, athlete_id=42)
+    finally:
+        conn.close()
+
+    assert n == 1  # activity 2 is the only unfetched Run; 3 is a Ride
+
+
+def test_count_runs_awaiting_detail_scopes_by_athlete(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.upsert_activity(conn, athlete_id=42, activity=_summary_activity(activity_id=1))
+        store.upsert_activity(conn, athlete_id=99, activity=_summary_activity(activity_id=1))
+
+        n42 = store.count_runs_awaiting_detail(conn, athlete_id=42)
+        n99 = store.count_runs_awaiting_detail(conn, athlete_id=99)
+    finally:
+        conn.close()
+
+    assert n42 == 1
+    assert n99 == 1
+
+
+def test_delete_activities_not_in_cascades_to_best_effort(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        store.upsert_activity(conn, athlete_id=42, activity=_summary_activity(activity_id=1))
+        store.upsert_activity(conn, athlete_id=42, activity=_summary_activity(activity_id=2))
+        store.upsert_best_efforts(
+            conn, athlete_id=42, activity_id=1, efforts=[_best_effort_row("5k", 1100)]
+        )
+        store.upsert_best_efforts(
+            conn, athlete_id=42, activity_id=2, efforts=[_best_effort_row("5k", 1080)]
+        )
+        store.delete_activities_not_in(conn, athlete_id=42, kept_ids={1})
+        remaining = conn.execute(
+            "SELECT activity_id FROM best_effort WHERE athlete_id = 42",
+        ).fetchall()
+    finally:
+        conn.close()
+
+    assert {r["activity_id"] for r in remaining} == {1}
