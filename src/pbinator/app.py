@@ -141,7 +141,7 @@ def _render_sync_result(
     if result.rate_limited:
         st.warning(
             f"Rate-limited after {result.inserted_or_updated} activities. "
-            f"{_format_resume_message(result.usage)}"
+            f"{_format_resume_message(result.usage)}{suffix}"
         )
         return
     if result.deleted:
