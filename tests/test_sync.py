@@ -113,6 +113,7 @@ def _activity(activity_id: int, start_date: str) -> dict[str, Any]:
         "name": f"Activity {activity_id}",
         "sport_type": "Run",
         "start_date": start_date,
+        "start_date_local": start_date.replace("Z", ""),
         "distance": 5000.0,
         "moving_time": 1500,
         "elapsed_time": 1530,
