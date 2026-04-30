@@ -38,6 +38,22 @@ CREATE TABLE IF NOT EXISTS sync_cursor (
     last_activity_start  TEXT,
     last_synced_at       TEXT
 );
+
+CREATE TABLE IF NOT EXISTS best_effort (
+    athlete_id     INTEGER NOT NULL,
+    activity_id    INTEGER NOT NULL,
+    distance_label TEXT    NOT NULL,
+    distance_m     REAL    NOT NULL,
+    moving_time_s  INTEGER NOT NULL,
+    elapsed_time_s INTEGER NOT NULL,
+    start_date     TEXT    NOT NULL,
+    PRIMARY KEY (athlete_id, activity_id, distance_label),
+    FOREIGN KEY (athlete_id, activity_id)
+        REFERENCES activity(athlete_id, activity_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_best_effort_athlete_label_time
+    ON best_effort (athlete_id, distance_label, moving_time_s);
 """
 
 
@@ -68,6 +84,7 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_SCHEMA_SQL)
     _add_column_if_missing(conn, "activity", "start_date_local", "TEXT")
+    _add_column_if_missing(conn, "activity", "best_efforts_fetched_at", "TEXT")
     with conn:
         conn.execute(
             "UPDATE activity "

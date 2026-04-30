@@ -23,7 +23,7 @@ def test_connect_bootstraps_schema(db_path: Path) -> None:
     finally:
         conn.close()
 
-    assert tables == {"activity", "sync_cursor"}
+    assert tables == {"activity", "sync_cursor", "best_effort"}
 
 
 def test_connect_is_idempotent(db_path: Path) -> None:
@@ -415,3 +415,86 @@ def test_connect_does_not_overwrite_existing_start_date_local(db_path: Path) -> 
         conn.close()
 
     assert row["start_date_local"] == "2024-04-15T08:00:00"
+
+
+def test_connect_creates_best_effort_table(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+    finally:
+        conn.close()
+
+    assert "best_effort" in tables
+
+
+def test_connect_creates_best_effort_index(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        indexes = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            ).fetchall()
+        }
+    finally:
+        conn.close()
+
+    assert "idx_best_effort_athlete_label_time" in indexes
+
+
+def test_connect_adds_best_efforts_fetched_at_to_existing_db(db_path: Path) -> None:
+    """A pre-upgrade activity row gains the column with NULL on bootstrap."""
+    legacy = sqlite3.connect(str(db_path))
+    try:
+        legacy.executescript(
+            """
+            CREATE TABLE activity (
+                athlete_id        INTEGER NOT NULL,
+                activity_id       INTEGER NOT NULL,
+                sport_type        TEXT    NOT NULL,
+                start_date        TEXT    NOT NULL,
+                distance_m        REAL    NOT NULL,
+                moving_time_s     INTEGER NOT NULL,
+                elapsed_time_s    INTEGER NOT NULL,
+                total_elev_gain_m REAL    NOT NULL,
+                name              TEXT    NOT NULL,
+                raw_json          TEXT    NOT NULL,
+                fetched_at        TEXT    NOT NULL,
+                PRIMARY KEY (athlete_id, activity_id)
+            );
+            """
+        )
+        legacy.execute(
+            "INSERT INTO activity VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                42,
+                1,
+                "Run",
+                "2024-04-15T07:00:00Z",
+                5000.0,
+                1500,
+                1530,
+                0.0,
+                "Run",
+                '{"start_date_local":"2024-04-15T08:00:00"}',
+                "2024-04-15T08:00:30+00:00",
+            ),
+        )
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    conn = store.connect(db_path)
+    try:
+        row = conn.execute(
+            "SELECT best_efforts_fetched_at FROM activity WHERE activity_id = 1",
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert row["best_efforts_fetched_at"] is None
