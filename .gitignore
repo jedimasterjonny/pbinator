@@ -25,3 +25,6 @@ htmlcov/
 
 # Local data
 data/
+
+# Brainstorming companion artefacts
+.superpowers/
