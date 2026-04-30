@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 from pydantic_settings import SettingsConfigDict
@@ -29,6 +31,7 @@ def isolated_settings_cls(
     monkeypatch.delenv("STRAVA_CLIENT_ID", raising=False)
     monkeypatch.delenv("STRAVA_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("STRAVA_REDIRECT_URI", raising=False)
+    monkeypatch.delenv("PBINATOR_DB_PATH", raising=False)
     return _IsolatedSettings
 
 
@@ -72,3 +75,26 @@ def test_missing_credentials_raises_validation_error(
 ) -> None:
     with pytest.raises(ValidationError):
         isolated_settings_cls()  # ty: ignore[missing-argument]
+
+
+def test_db_path_defaults_to_data_pbinator_db(
+    monkeypatch: pytest.MonkeyPatch, isolated_settings_cls: type[Settings]
+) -> None:
+    monkeypatch.setenv("STRAVA_CLIENT_ID", "client-123")
+    monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
+
+    s = isolated_settings_cls()  # ty: ignore[missing-argument]
+
+    assert s.pbinator_db_path == Path("data/pbinator.db")
+
+
+def test_db_path_can_be_overridden(
+    monkeypatch: pytest.MonkeyPatch, isolated_settings_cls: type[Settings]
+) -> None:
+    monkeypatch.setenv("STRAVA_CLIENT_ID", "client-123")
+    monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
+    monkeypatch.setenv("PBINATOR_DB_PATH", "/tmp/custom.db")  # noqa: S108 — test fixture path, not real I/O
+
+    s = isolated_settings_cls()  # ty: ignore[missing-argument]
+
+    assert s.pbinator_db_path == Path("/tmp/custom.db")  # noqa: S108 — same as above
