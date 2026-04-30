@@ -5,6 +5,11 @@
     {
       "matchUpdateTypes": ["major"],
       "reviewers": ["jedimasterjonny"]
+    },
+    {
+      "matchUpdateTypes": ["pinDigest", "digest"],
+      "automerge": true,
+      "automergeType": "branch"
     }
   ]
 }
