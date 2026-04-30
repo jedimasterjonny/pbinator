@@ -11,22 +11,13 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from pbinator.best_efforts import KNOWN_LABELS
+
 if TYPE_CHECKING:
     import sqlite3
 
 
-DISTANCE_LABELS: tuple[str, ...] = (
-    "400m",
-    "1/2 mile",
-    "1k",
-    "1 mile",
-    "2 mile",
-    "5k",
-    "10k",
-    "15k",
-    "Half-Marathon",
-    "Marathon",
-)
+DISTANCE_LABELS: tuple[str, ...] = KNOWN_LABELS
 
 DISPLAY_LABELS: dict[str, str] = {
     "400m": "400m",

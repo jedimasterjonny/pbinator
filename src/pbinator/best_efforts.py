@@ -25,7 +25,7 @@ _DETAIL_URL_TEMPLATE = "https://www.strava.com/api/v3/activities/{activity_id}"
 # The full set of best_efforts labels Strava emits for a Run. Anything outside
 # this allow-list is dropped on parse — we'd rather miss an unknown future
 # label than store something we can't render.
-_KNOWN_LABELS: tuple[str, ...] = (
+KNOWN_LABELS: tuple[str, ...] = (
     "400m",
     "1/2 mile",
     "1k",
@@ -75,7 +75,7 @@ def parse_best_efforts(detail: dict[str, Any]) -> list[BestEffortRow]:
     rows: list[BestEffortRow] = []
     for entry in raw:
         label = str(entry["name"])
-        if label not in _KNOWN_LABELS:
+        if label not in KNOWN_LABELS:
             continue
         rows.append(
             BestEffortRow(
