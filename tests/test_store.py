@@ -280,3 +280,13 @@ def test_delete_activities_not_in_with_empty_kept_ids_clears_athlete(
     assert deleted == 1
     assert a1 == 0
     assert a2 == 1
+
+
+def test_connect_enables_foreign_keys(db_path: Path) -> None:
+    conn = store.connect(db_path)
+    try:
+        row = conn.execute("PRAGMA foreign_keys").fetchone()
+    finally:
+        conn.close()
+
+    assert row[0] == 1
