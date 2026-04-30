@@ -430,6 +430,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
+    { name = "pandas", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "pydantic-settings", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "streamlit", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
     { name = "streamlit-cookies-controller", marker = "sys_platform == 'darwin' or sys_platform == 'linux'" },
@@ -452,6 +453,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "pandas", specifier = ">=2.2" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "streamlit", specifier = ">=1.56.0" },
     { name = "streamlit-cookies-controller", specifier = ">=0.0.4" },
