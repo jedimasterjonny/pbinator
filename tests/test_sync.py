@@ -650,7 +650,7 @@ def test_run_fetches_best_efforts_for_each_run(
         "id": 1,
         "best_efforts": [
             {
-                "name": "5k",
+                "name": "5K",
                 "distance": 5000.0,
                 "moving_time": 1100,
                 "elapsed_time": 1101,
@@ -682,7 +682,7 @@ def test_run_fetches_best_efforts_for_each_run(
     assert result.error is None
     assert detail1.called
     assert detail2.called
-    assert [(r["activity_id"], r["distance_label"]) for r in rows] == [(1, "5k")]
+    assert [(r["activity_id"], r["distance_label"]) for r in rows] == [(1, "5K")]
     assert all(row["best_efforts_fetched_at"] is not None for row in flags)
 
 

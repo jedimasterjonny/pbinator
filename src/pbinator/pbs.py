@@ -22,12 +22,13 @@ DISTANCE_LABELS: tuple[str, ...] = KNOWN_LABELS
 DISPLAY_LABELS: dict[str, str] = {
     "400m": "400m",
     "1/2 mile": "½mi",
-    "1k": "1km",
+    "1K": "1km",
     "1 mile": "1mi",
     "2 mile": "2mi",
-    "5k": "5km",
-    "10k": "10km",
-    "15k": "15km",
+    "5K": "5km",
+    "10K": "10km",
+    "15K": "15km",
+    "10 mile": "10mi",
     "Half-Marathon": "Half",
     "Marathon": "Marathon",
 }
