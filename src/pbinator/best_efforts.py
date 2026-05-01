@@ -24,16 +24,18 @@ _DETAIL_URL_TEMPLATE = "https://www.strava.com/api/v3/activities/{activity_id}"
 
 # The full set of best_efforts labels Strava emits for a Run. Anything outside
 # this allow-list is dropped on parse — we'd rather miss an unknown future
-# label than store something we can't render.
+# label than store something we can't render. Note the uppercase "K" — Strava
+# uses "1K"/"5K"/etc., not "1k"/"5k".
 KNOWN_LABELS: tuple[str, ...] = (
     "400m",
     "1/2 mile",
-    "1k",
+    "1K",
     "1 mile",
     "2 mile",
-    "5k",
-    "10k",
-    "15k",
+    "5K",
+    "10K",
+    "15K",
+    "10 mile",
     "Half-Marathon",
     "Marathon",
 )

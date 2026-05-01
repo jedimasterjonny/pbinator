@@ -33,12 +33,13 @@ def test_parse_best_efforts_returns_full_set() -> None:
         "best_efforts": [
             _effort("400m", 400.0, 60),
             _effort("1/2 mile", 804.672, 130),
-            _effort("1k", 1000.0, 200),
+            _effort("1K", 1000.0, 200),
             _effort("1 mile", 1609.34, 320),
             _effort("2 mile", 3218.69, 700),
-            _effort("5k", 5000.0, 1100),
-            _effort("10k", 10000.0, 2280),
-            _effort("15k", 15000.0, 3550),
+            _effort("5K", 5000.0, 1100),
+            _effort("10K", 10000.0, 2280),
+            _effort("15K", 15000.0, 3550),
+            _effort("10 mile", 16093.4, 3800),
             _effort("Half-Marathon", 21097.5, 5090),
             _effort("Marathon", 42195.0, 10760),
         ],
@@ -50,12 +51,13 @@ def test_parse_best_efforts_returns_full_set() -> None:
     assert labels == [
         "400m",
         "1/2 mile",
-        "1k",
+        "1K",
         "1 mile",
         "2 mile",
-        "5k",
-        "10k",
-        "15k",
+        "5K",
+        "10K",
+        "15K",
+        "10 mile",
         "Half-Marathon",
         "Marathon",
     ]
@@ -65,25 +67,25 @@ def test_parse_best_efforts_returns_full_set() -> None:
 
 
 def test_parse_best_efforts_handles_partial_set() -> None:
-    detail = {"best_efforts": [_effort("1k", 1000.0, 200)]}
+    detail = {"best_efforts": [_effort("1K", 1000.0, 200)]}
 
     rows = best_efforts.parse_best_efforts(detail)
 
     assert len(rows) == 1
-    assert rows[0].distance_label == "1k"
+    assert rows[0].distance_label == "1K"
 
 
 def test_parse_best_efforts_filters_unknown_labels() -> None:
     detail = {
         "best_efforts": [
-            _effort("1k", 1000.0, 200),
+            _effort("1K", 1000.0, 200),
             _effort("Lunar Mile", 1609.34, 999),
         ],
     }
 
     rows = best_efforts.parse_best_efforts(detail)
 
-    assert [row.distance_label for row in rows] == ["1k"]
+    assert [row.distance_label for row in rows] == ["1K"]
 
 
 def test_parse_best_efforts_returns_empty_when_field_absent() -> None:
@@ -98,7 +100,7 @@ def test_parse_best_efforts_returns_empty_when_field_null() -> None:
 
 
 def test_parse_best_efforts_raises_on_missing_required_field() -> None:
-    detail = {"best_efforts": [{"name": "1k", "distance": 1000.0}]}  # missing moving_time
+    detail = {"best_efforts": [{"name": "1K", "distance": 1000.0}]}  # missing moving_time
 
     with pytest.raises(KeyError):
         best_efforts.parse_best_efforts(detail)
@@ -106,7 +108,7 @@ def test_parse_best_efforts_raises_on_missing_required_field() -> None:
 
 @respx.mock
 def test_fetch_detail_returns_payload_and_usage() -> None:
-    body = {"id": 12345, "best_efforts": [_effort("1k", 1000.0, 200)]}
+    body = {"id": 12345, "best_efforts": [_effort("1K", 1000.0, 200)]}
     respx.get(_DETAIL_URL).mock(
         return_value=httpx.Response(200, headers=_ok_headers(short_used=7), json=body)
     )
