@@ -239,7 +239,7 @@ def _render_pbs_tab(db_conn: sqlite3.Connection, athlete_id: int) -> None:
         lambda col: [pb_style if mask_df.at[idx, col.name] else "" for idx in col.index],
         axis=0,
     )
-    st.dataframe(styler, use_container_width=True)
+    st.dataframe(styler, width="stretch")
     awaiting = store.count_runs_awaiting_detail(db_conn, athlete_id=athlete_id)
     if awaiting > 0:
         st.caption(f"{awaiting} Runs still awaiting detail — keep clicking Sync.")
