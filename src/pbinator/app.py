@@ -57,10 +57,16 @@ def _read_cookie(controller: CookieController) -> TokenPayload | None:
 
 
 def _write_cookie(controller: CookieController, token: TokenPayload) -> None:
-    """Persist the token to the browser as a JSON-encoded cookie."""
+    """Persist the token to the browser as a JSON-encoded cookie.
+
+    Pass ``expires`` explicitly: streamlit-cookies-controller defaults it to
+    24h when omitted (cookie_controller.py:81-82), which would override the
+    90-day ``max_age`` and force the user to re-authorise after one day.
+    """
     controller.set(
         _COOKIE_NAME,
         token.model_dump_json(),
+        expires=datetime.now(UTC) + timedelta(seconds=_COOKIE_MAX_AGE_SECONDS),
         max_age=_COOKIE_MAX_AGE_SECONDS,
         same_site="lax",
         path="/",
