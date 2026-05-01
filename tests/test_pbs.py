@@ -246,6 +246,8 @@ def test_to_dataframe_round_trips_values_and_mask() -> None:
 
     values_df, mask_df = pbs.to_dataframe(rows)
 
+    assert values_df.index.name == "Date"
+    assert mask_df.index.name == "Date"
     assert values_df.loc["2024-04-15", "5km"] == "18:20"
     assert values_df.loc["2024-04-15", "1km"] == "3:20"
     assert values_df.loc["2024-04-15", "Marathon"] == "—"
