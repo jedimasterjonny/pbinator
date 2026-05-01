@@ -182,7 +182,8 @@ def to_dataframe(rows: list[PbRow]) -> tuple[pd.DataFrame, pd.DataFrame]:
         values.append(values_row)
         masks.append(mask_row)
 
+    index = pd.Index(dates, name="Date")
     return (
-        pd.DataFrame(values, index=dates, columns=display_columns),
-        pd.DataFrame(masks, index=dates, columns=display_columns),
+        pd.DataFrame(values, index=index, columns=display_columns),
+        pd.DataFrame(masks, index=index, columns=display_columns),
     )
