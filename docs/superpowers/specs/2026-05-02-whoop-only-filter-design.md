@@ -37,12 +37,12 @@ rows_o = [
         "Duration (min)": o.whoop.duration_min,
         "Reason": reason_label[o.reason],
     }
-    for o in sorted(filtered, key=attrgetter("whoop.start_utc"), reverse=True)
+    for o in sorted(filtered, key=lambda x: x.whoop.start_utc, reverse=True)
 ]
 st.dataframe(rows_o, width="stretch")
 ```
 
-`attrgetter("whoop.start_utc")` is already in use elsewhere in the file (post-Task-4 refactor); reuse rather than reintroducing a `lambda`.
+The `lambda` sort key matches what `_render_whoop_tab` already uses for both result lists today.
 
 ## Out of scope
 
