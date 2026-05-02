@@ -52,15 +52,18 @@ class WhoopWorkout:
 
 
 def _parse_offset(tz_str: str, line_no: int) -> timezone:
-    match = _TZ_RE.match(tz_str)
+    match = _TZ_RE.fullmatch(tz_str)
     if match is None:
         msg = f"unparsable timezone: {tz_str!r}"
         raise WhoopParseError(line_no, msg)
     if match.group(1) == "Z":
         return UTC
-    sign = 1 if match.group(2) == "+" else -1
     hours = int(match.group(3))
     minutes = int(match.group(4))
+    if hours >= 24 or minutes >= 60:  # noqa: PLR2004 — inline calendar bounds
+        msg = f"unparsable timezone: {tz_str!r}"
+        raise WhoopParseError(line_no, msg)
+    sign = 1 if match.group(2) == "+" else -1
     return timezone(sign * timedelta(hours=hours, minutes=minutes))
 
 
