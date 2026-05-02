@@ -189,3 +189,29 @@ def test_offset_with_minutes_handled() -> None:
     workouts = parse_workouts(text)
 
     assert workouts[0].start_utc == datetime(2024, 4, 15, 7, 0, 0, tzinfo=UTC)
+
+
+def test_out_of_range_hours_in_offset_raises() -> None:
+    text = _csv(
+        "2024-04-15 06:00:00,2024-04-16 06:00:00,UTC+25:00,"
+        "2024-04-15 07:00:00,2024-04-15 07:30:00,30,Running,15.0,500.0"
+    )
+
+    with pytest.raises(WhoopParseError) as excinfo:
+        parse_workouts(text)
+
+    assert excinfo.value.line_no == 2
+    assert "25:00" in excinfo.value.reason
+
+
+def test_out_of_range_minutes_in_offset_raises() -> None:
+    text = _csv(
+        "2024-04-15 06:00:00,2024-04-16 06:00:00,UTC+05:60,"
+        "2024-04-15 12:30:00,2024-04-15 13:00:00,30,Running,15.0,500.0"
+    )
+
+    with pytest.raises(WhoopParseError) as excinfo:
+        parse_workouts(text)
+
+    assert excinfo.value.line_no == 2
+    assert "05:60" in excinfo.value.reason
