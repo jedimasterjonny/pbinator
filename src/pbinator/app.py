@@ -5,11 +5,13 @@ from __future__ import annotations
 import secrets
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
 import streamlit as st
 from pydantic import ValidationError
+from sqlalchemy.orm import Session
 from streamlit_cookies_controller import CookieController
 
 from pbinator import pbs, store, sync
@@ -17,7 +19,7 @@ from pbinator.settings import Settings
 from pbinator.strava import TokenPayload, build_authorize_url, exchange_code, refresh
 
 if TYPE_CHECKING:
-    import sqlite3
+    from sqlalchemy.engine import Engine
 
     from pbinator.activities_api import RateLimitUsage
     from pbinator.sync import SyncResult
@@ -116,13 +118,25 @@ def _format_resume_message(usage: RateLimitUsage | None) -> str:
     return f"Try again at {next_reset.strftime('%H:%M')} UTC."
 
 
-def _backfill_suffix(conn: sqlite3.Connection, athlete_id: int) -> str:
+@st.cache_resource
+def _get_engine(path_str: str) -> Engine:
+    """Build the SQLite engine once per process; Streamlit caches across reruns.
+
+    ``path_str`` is the cache key — Streamlit hashes function arguments.
+
+    Returns:
+        The cached ``Engine`` instance for this process.
+    """
+    return store.make_engine(Path(path_str))
+
+
+def _backfill_suffix(session: Session, athlete_id: int) -> str:
     """Suffix showing count of runs awaiting detail; empty if none.
 
     Returns:
         A string like " N Runs still awaiting detail." or "" if none.
     """
-    awaiting = store.count_runs_awaiting_detail(conn, athlete_id=athlete_id)
+    awaiting = store.count_runs_awaiting_detail(session, athlete_id=athlete_id)
     if awaiting == 0:
         return ""
     return f" {awaiting} Runs still awaiting detail."
@@ -131,7 +145,7 @@ def _backfill_suffix(conn: sqlite3.Connection, athlete_id: int) -> str:
 def _render_sync_result(
     result: SyncResult,
     controller: CookieController,
-    conn: sqlite3.Connection,
+    session: Session,
     athlete_id: int,
 ) -> None:
     if result.error == "auth_failed":
@@ -143,7 +157,7 @@ def _render_sync_result(
     if result.error == "http_error":
         st.error("Sync failed. Please try again.")
         return
-    suffix = _backfill_suffix(conn, athlete_id)
+    suffix = _backfill_suffix(session, athlete_id)
     if result.rate_limited:
         st.warning(
             f"Rate-limited after {result.inserted_or_updated} activities. "
@@ -162,7 +176,7 @@ def _render_sync_result(
 def _run_sync_with_status(
     token: TokenPayload,
     settings: Settings,
-    conn: sqlite3.Connection,
+    session: Session,
     *,
     full: bool,
 ) -> SyncResult:
@@ -176,9 +190,9 @@ def _run_sync_with_status(
             status.write(f"Page {page_number} — {count} activities")
 
         if full:
-            result = sync.full_rescan(token, settings, conn, on_page=on_page)
+            result = sync.full_rescan(token, settings, session, on_page=on_page)
         else:
-            result = sync.run(token, settings, conn, on_page=on_page)
+            result = sync.run(token, settings, session, on_page=on_page)
         if pages_seen == 0 and result.error is None and not result.rate_limited:
             status.write("No new activities.")
         status.update(state="complete")
@@ -205,12 +219,12 @@ def _render_logged_out(settings: Settings, controller: CookieController) -> None
 def _render_sync_tab(
     token: TokenPayload,
     settings: Settings,
-    db_conn: sqlite3.Connection,
+    session: Session,
     controller: CookieController,
 ) -> None:
     """Render the Sync tab body (the existing logged-in UI)."""
-    count = store.count_activities(db_conn, athlete_id=token.athlete_id)
-    cursor = store.get_cursor(db_conn, athlete_id=token.athlete_id)
+    count = store.count_activities(session, athlete_id=token.athlete_id)
+    cursor = store.get_cursor(session, athlete_id=token.athlete_id)
     last_synced = cursor.last_synced_at if cursor is not None else None
     st.write(f"Stored activities: **{count}**")
     if last_synced:
@@ -227,8 +241,8 @@ def _render_sync_tab(
         # block and result message before the user can read them. The
         # count display at the top is stale until the next interaction;
         # that's an acceptable trade-off for v1.
-        result = _run_sync_with_status(token, settings, db_conn, full=clicked_rescan)
-        _render_sync_result(result, controller, db_conn, token.athlete_id)
+        result = _run_sync_with_status(token, settings, session, full=clicked_rescan)
+        _render_sync_result(result, controller, session, token.athlete_id)
         if result.error == "auth_failed":
             st.rerun()
 
@@ -238,9 +252,9 @@ def _render_sync_tab(
         st.rerun()
 
 
-def _render_pbs_tab(db_conn: sqlite3.Connection, athlete_id: int) -> None:
+def _render_pbs_tab(session: Session, athlete_id: int) -> None:
     """Render the PBs tab body."""
-    rows = pbs.compute_rows(db_conn, athlete_id=athlete_id)
+    rows = pbs.compute_rows(session, athlete_id=athlete_id)
     if not rows:
         st.info("No PBs yet — click Sync activities, then come back.")
         return
@@ -251,7 +265,7 @@ def _render_pbs_tab(db_conn: sqlite3.Connection, athlete_id: int) -> None:
         axis=0,
     )
     st.dataframe(styler, width="stretch")
-    awaiting = store.count_runs_awaiting_detail(db_conn, athlete_id=athlete_id)
+    awaiting = store.count_runs_awaiting_detail(session, athlete_id=athlete_id)
     if awaiting > 0:
         st.caption(f"{awaiting} Runs still awaiting detail — keep clicking Sync.")
 
@@ -262,15 +276,13 @@ def _render_logged_in(
     """Show the athlete header, sync UI, and the PBs tab."""
     st.write(f"Logged in as {token.athlete_first_name} {token.athlete_last_name}")
 
-    db_conn = store.connect(settings.pbinator_db_path)
-    try:
+    engine = _get_engine(str(settings.pbinator_db_path))
+    with Session(engine) as session:
         tab_sync, tab_pbs = st.tabs(["Sync", "PBs"])
         with tab_sync:
-            _render_sync_tab(token, settings, db_conn, controller)
+            _render_sync_tab(token, settings, session, controller)
         with tab_pbs:
-            _render_pbs_tab(db_conn, token.athlete_id)
-    finally:
-        db_conn.close()
+            _render_pbs_tab(session, token.athlete_id)
 
 
 def _handle_callback(settings: Settings, controller: CookieController) -> None:

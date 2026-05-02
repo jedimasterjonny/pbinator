@@ -17,8 +17,9 @@ from pbinator import best_efforts as best_efforts_api
 from pbinator.activities_api import AuthError, RateLimited
 
 if TYPE_CHECKING:
-    import sqlite3
     from collections.abc import Callable
+
+    from sqlalchemy.orm import Session
 
     from pbinator.activities_api import ActivityPage, RateLimitUsage
     from pbinator.settings import Settings
@@ -91,7 +92,7 @@ def _iso_to_epoch(iso_utc: str) -> int:
 def _process_detail_fetches_for_page(  # noqa: PLR0913, PLR0917 — six params are all distinct concerns for this private helper
     client: httpx.Client,
     token_access: str,
-    conn: sqlite3.Connection,
+    session: Session,
     athlete_id: int,
     activities: list[dict[str, Any]],
     usage_in: RateLimitUsage,
@@ -107,16 +108,7 @@ def _process_detail_fetches_for_page(  # noqa: PLR0913, PLR0917 — six params a
         _RateBudgetError: when the preflight check trips before a fetch.
     """
     run_ids = [int(a["id"]) for a in activities if str(a["sport_type"]) == "Run"]
-    already_fetched: frozenset[int] = frozenset()
-    if run_ids:
-        placeholders = ",".join("?" for _ in run_ids)
-        sql = (
-            f"SELECT activity_id FROM activity "  # noqa: S608 — placeholders only
-            f"WHERE athlete_id = ? AND best_efforts_fetched_at IS NOT NULL "
-            f"AND activity_id IN ({placeholders})"
-        )
-        rows = conn.execute(sql, (athlete_id, *run_ids)).fetchall()
-        already_fetched = frozenset(int(r["activity_id"]) for r in rows)
+    already_fetched = store.already_fetched_run_ids(session, athlete_id=athlete_id, run_ids=run_ids)
 
     usage = usage_in
     for activity in activities:
@@ -131,15 +123,15 @@ def _process_detail_fetches_for_page(  # noqa: PLR0913, PLR0917 — six params a
         )
         usage = fetched.usage
         rows = best_efforts_api.parse_best_efforts(fetched.detail)
-        with conn:
+        with store.write_transaction(session):
             store.upsert_best_efforts(
-                conn,
+                session,
                 athlete_id=athlete_id,
                 activity_id=int(activity["id"]),
                 efforts=rows,
             )
             store.mark_detail_fetched(
-                conn,
+                session,
                 athlete_id=athlete_id,
                 activity_id=int(activity["id"]),
                 fetched_at=_now_iso(),
@@ -148,7 +140,7 @@ def _process_detail_fetches_for_page(  # noqa: PLR0913, PLR0917 — six params a
 
 
 def _reconcile_deletions(
-    conn: sqlite3.Connection,
+    session: Session,
     athlete_id: int,
     seen_ids: set[int],
     *,
@@ -165,14 +157,14 @@ def _reconcile_deletions(
     """
     if rate_limited or error is not None or not seen_ids:
         return 0
-    with conn:
-        return store.delete_activities_not_in(conn, athlete_id=athlete_id, kept_ids=seen_ids)
+    with store.write_transaction(session):
+        return store.delete_activities_not_in(session, athlete_id=athlete_id, kept_ids=seen_ids)
 
 
 def run(
     token: TokenPayload,
     settings: Settings,  # noqa: ARG001 — reserved for future use; kept for interface symmetry
-    conn: sqlite3.Connection,
+    session: Session,
     on_page: Callable[[int, int], None] | None = None,
 ) -> SyncResult:
     """Run an incremental sync for ``token.athlete_id``.
@@ -181,7 +173,7 @@ def run(
         A ``SyncResult`` describing the outcome. Cursor is always advanced
         with progress made (if any), even on errors.
     """
-    cursor = store.get_cursor(conn, athlete_id=token.athlete_id)
+    cursor = store.get_cursor(session, athlete_id=token.athlete_id)
     after_epoch: int | None = (
         _iso_to_epoch(cursor.last_activity_start)
         if cursor is not None and cursor.last_activity_start is not None
@@ -210,15 +202,17 @@ def run(
                 usage = page_data.usage
                 if not page_data.activities:
                     break
-                with conn:  # one transaction per page
+                with store.write_transaction(session):  # one transaction per page
                     for activity in page_data.activities:
-                        store.upsert_activity(conn, athlete_id=token.athlete_id, activity=activity)
+                        store.upsert_activity(
+                            session, athlete_id=token.athlete_id, activity=activity
+                        )
                         inserted += 1
                         max_seen_start = max_iso(max_seen_start, str(activity["start_date"]))
                 usage = _process_detail_fetches_for_page(
                     client,
                     token.access_token,
-                    conn,
+                    session,
                     token.athlete_id,
                     page_data.activities,
                     usage,
@@ -240,12 +234,9 @@ def run(
     except httpx.HTTPError:
         error = "http_error"
     finally:
-        # Wrap in `with conn:` so the cursor write commits on clean exit
-        # — sqlite3's default isolation_level holds writes in an implicit
-        # transaction that would otherwise roll back on conn.close().
-        with conn:
+        with store.write_transaction(session):
             store.update_cursor(
-                conn,
+                session,
                 athlete_id=token.athlete_id,
                 last_activity_start=max_seen_start,
                 last_synced_at=_now_iso(),
@@ -264,7 +255,7 @@ def run(
 def full_rescan(
     token: TokenPayload,
     settings: Settings,  # noqa: ARG001 — reserved for future use; kept for interface symmetry
-    conn: sqlite3.Connection,
+    session: Session,
     on_page: Callable[[int, int], None] | None = None,
 ) -> SyncResult:
     """Re-fetch every activity, upsert, and reconcile deletions on a clean run.
@@ -281,7 +272,7 @@ def full_rescan(
     # Seed from the existing cursor so a no-op rescan (empty first page,
     # network/auth/rate-limit error before any page completes) does not wipe
     # the previously stored last_activity_start when update_cursor runs below.
-    cursor = store.get_cursor(conn, athlete_id=token.athlete_id)
+    cursor = store.get_cursor(session, athlete_id=token.athlete_id)
     max_seen_start: str | None = cursor.last_activity_start if cursor is not None else None
     page = 1
     pages_fetched = 0
@@ -304,16 +295,18 @@ def full_rescan(
                 usage = page_data.usage
                 if not page_data.activities:
                     break
-                with conn:
+                with store.write_transaction(session):
                     for activity in page_data.activities:
-                        store.upsert_activity(conn, athlete_id=token.athlete_id, activity=activity)
+                        store.upsert_activity(
+                            session, athlete_id=token.athlete_id, activity=activity
+                        )
                         seen_ids.add(int(activity["id"]))
                         inserted += 1
                         max_seen_start = max_iso(max_seen_start, str(activity["start_date"]))
                 usage = _process_detail_fetches_for_page(
                     client,
                     token.access_token,
-                    conn,
+                    session,
                     token.athlete_id,
                     page_data.activities,
                     usage,
@@ -336,12 +329,12 @@ def full_rescan(
         error = "http_error"
 
     deleted = _reconcile_deletions(
-        conn, token.athlete_id, seen_ids, rate_limited=rate_limited, error=error
+        session, token.athlete_id, seen_ids, rate_limited=rate_limited, error=error
     )
 
-    with conn:
+    with store.write_transaction(session):
         store.update_cursor(
-            conn,
+            session,
             athlete_id=token.athlete_id,
             last_activity_start=max_seen_start,
             last_synced_at=_now_iso(),
