@@ -1,6 +1,6 @@
 """Personal-best derivation and tabular rendering helpers.
 
-Pure-logic module: takes a sqlite3 connection in, returns dataclasses and
+Pure-logic module: takes a Session in, returns dataclasses and
 pandas DataFrames out. No Streamlit, no global state.
 """
 
@@ -10,11 +10,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pandas as pd
+from sqlalchemy import text
 
 from pbinator.best_efforts import KNOWN_LABELS
 
 if TYPE_CHECKING:
-    import sqlite3
+    from sqlalchemy.orm import Session
 
 
 DISTANCE_LABELS: tuple[str, ...] = KNOWN_LABELS
@@ -114,7 +115,7 @@ GROUP BY be.distance_label
 """
 
 
-def compute_rows(conn: sqlite3.Connection, *, athlete_id: int) -> list[PbRow]:
+def compute_rows(session: Session, *, athlete_id: int) -> list[PbRow]:
     """Compute the PB table rows for ``athlete_id``.
 
     Returns:
@@ -122,21 +123,21 @@ def compute_rows(conn: sqlite3.Connection, *, athlete_id: int) -> list[PbRow]:
         a value is ``None`` if no PB had been set at that distance by the
         row's date.
     """
-    breaks = conn.execute(_BREAK_QUERY, {"athlete_id": athlete_id}).fetchall()
+    breaks = session.execute(text(_BREAK_QUERY), {"athlete_id": athlete_id}).all()
     if not breaks:
         return []
 
     breaks_by_date: dict[str, set[str]] = {}
     for row in breaks:
-        breaks_by_date.setdefault(row["local_date"], set()).add(row["distance_label"])
+        breaks_by_date.setdefault(row.local_date, set()).add(row.distance_label)
 
     rows: list[PbRow] = []
     for date in sorted(breaks_by_date.keys(), reverse=True):
-        running = conn.execute(
-            _RUNNING_BEST_FOR_DATE_QUERY,
+        running = session.execute(
+            text(_RUNNING_BEST_FOR_DATE_QUERY),
             {"athlete_id": athlete_id, "date": date},
-        ).fetchall()
-        running_by_label = {r["distance_label"]: int(r["best_so_far"]) for r in running}
+        ).all()
+        running_by_label = {r.distance_label: int(r.best_so_far) for r in running}
         cells: dict[str, PbCell | None] = {}
         for label in DISTANCE_LABELS:
             if label in running_by_label:

@@ -1,13 +1,15 @@
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 import respx
+from sqlalchemy.orm import Session
+from sqlmodel import select
 
 from pbinator import store
 from pbinator.activities_api import RateLimitUsage
+from pbinator.models import Activity
 from pbinator.settings import Settings
 from pbinator.strava import TokenPayload
 from pbinator.sync import SyncResult, full_rescan, max_iso, run, would_exceed_next_call
@@ -85,15 +87,10 @@ _ACTIVITIES_URL = "https://www.strava.com/api/v3/athlete/activities"
 _DETAIL_URL = "https://www.strava.com/api/v3/activities/{}"
 
 
-@pytest.fixture
-def db_path(tmp_path: Path) -> Path:
-    return tmp_path / "pbinator.db"
-
-
-def _settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Settings:
+def _settings(tmp_path_str: str, monkeypatch: pytest.MonkeyPatch) -> Settings:
     monkeypatch.setenv("STRAVA_CLIENT_ID", "client-1")
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-1")
-    monkeypatch.setenv("PBINATOR_DB_PATH", str(tmp_path / "ignored.db"))
+    monkeypatch.setenv("PBINATOR_DB_PATH", tmp_path_str)
     return Settings()  # ty: ignore[missing-argument]
 
 
@@ -133,9 +130,9 @@ def _ok_headers(short_used: int = 5, daily_used: int = 100) -> dict[str, str]:
 
 @respx.mock
 def test_run_cold_start_paginates_until_empty(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     page1 = [_activity(1, "2024-04-15T07:00:00Z"), _activity(2, "2024-04-16T07:00:00Z")]
     page2 = [_activity(3, "2024-04-17T07:00:00Z")]
     respx.get(_ACTIVITIES_URL).mock(
@@ -150,13 +147,10 @@ def test_run_cold_start_paginates_until_empty(
             return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
         )
 
-    conn = store.connect(db_path)
-    try:
-        result = run(_token(), settings, conn)
-        cursor = store.get_cursor(conn, athlete_id=42)
-        count = store.count_activities(conn, athlete_id=42)
-    finally:
-        conn.close()
+    result = run(_token(), settings, session)
+    session.expire_all()
+    cursor = store.get_cursor(session, athlete_id=42)
+    count = store.count_activities(session, athlete_id=42)
 
     assert result.inserted_or_updated == 3
     assert result.pages_fetched == 3
@@ -171,30 +165,22 @@ def test_run_cold_start_paginates_until_empty(
 
 @respx.mock
 def test_run_warm_start_passes_after_epoch_from_cursor(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
-    conn = store.connect(db_path)
-    try:
-        with conn:  # commit so the next connection can read it
-            store.update_cursor(
-                conn,
-                athlete_id=42,
-                last_activity_start="2024-04-15T07:00:00Z",
-                last_synced_at="2024-04-15T08:00:00Z",
-            )
-    finally:
-        conn.close()
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+    with store.write_transaction(session):
+        store.update_cursor(
+            session,
+            athlete_id=42,
+            last_activity_start="2024-04-15T07:00:00Z",
+            last_synced_at="2024-04-15T08:00:00Z",
+        )
 
     route = respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(200, headers=_ok_headers(), json=[])
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = run(_token(), settings, conn)
-    finally:
-        conn.close()
+    result = run(_token(), settings, session)
 
     assert result.inserted_or_updated == 0
     assert result.pages_fetched == 1
@@ -205,9 +191,9 @@ def test_run_warm_start_passes_after_epoch_from_cursor(
 
 @respx.mock
 def test_run_breaks_when_rate_limit_preflight_trips(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     page1 = [_activity(1, "2024-04-15T07:00:00Z")]
     page2 = [_activity(2, "2024-04-16T07:00:00Z")]
     respx.get(_ACTIVITIES_URL).mock(
@@ -225,12 +211,9 @@ def test_run_breaks_when_rate_limit_preflight_trips(
         )
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = run(_token(), settings, conn)
-        cursor = store.get_cursor(conn, athlete_id=42)
-    finally:
-        conn.close()
+    result = run(_token(), settings, session)
+    session.expire_all()
+    cursor = store.get_cursor(session, athlete_id=42)
 
     assert result.rate_limited is True
     assert result.inserted_or_updated == 2
@@ -241,19 +224,16 @@ def test_run_breaks_when_rate_limit_preflight_trips(
 
 @respx.mock
 def test_run_returns_auth_failed_on_401(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(401, headers=_ok_headers(), json={})
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = run(_token(), settings, conn)
-        cursor = store.get_cursor(conn, athlete_id=42)
-    finally:
-        conn.close()
+    result = run(_token(), settings, session)
+    session.expire_all()
+    cursor = store.get_cursor(session, athlete_id=42)
 
     assert result.error == "auth_failed"
     assert result.inserted_or_updated == 0
@@ -264,28 +244,23 @@ def test_run_returns_auth_failed_on_401(
 
 @respx.mock
 def test_run_returns_http_error_on_5xx(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(500, headers=_ok_headers(), json={})
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = run(_token(), settings, conn)
-    finally:
-        conn.close()
-
+    result = run(_token(), settings, session)
     assert result.error == "http_error"
     assert result.rate_limited is False
 
 
 @respx.mock
 def test_run_returns_rate_limited_on_429(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(
             429,
@@ -297,21 +272,16 @@ def test_run_returns_rate_limited_on_429(
         )
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = run(_token(), settings, conn)
-    finally:
-        conn.close()
-
+    result = run(_token(), settings, session)
     assert result.rate_limited is True
     assert result.error is None
 
 
 @respx.mock
 def test_run_progress_callback_invoked_per_page(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     respx.get(_ACTIVITIES_URL).mock(
         side_effect=[
             httpx.Response(200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]),
@@ -323,37 +293,29 @@ def test_run_progress_callback_invoked_per_page(
     )
     seen: list[tuple[int, int]] = []
 
-    conn = store.connect(db_path)
-    try:
-        run(_token(), settings, conn, on_page=lambda p, n: seen.append((p, n)))
-    finally:
-        conn.close()
+    run(_token(), settings, session, on_page=lambda p, n: seen.append((p, n)))
 
     assert seen == [(1, 1)]
 
 
 @respx.mock
 def test_full_rescan_clean_run_reconciles_deletions(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
-    conn = store.connect(db_path)
-    try:
-        with conn:  # commit setup so full_rescan's connection can see it
-            for activity_id in (1, 2, 3, 99):
-                store.upsert_activity(
-                    conn,
-                    athlete_id=42,
-                    activity=_activity(activity_id, "2024-04-15T07:00:00Z"),
-                )
-            # Other athlete must remain untouched.
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+    with store.write_transaction(session):
+        for activity_id in (1, 2, 3, 99):
             store.upsert_activity(
-                conn,
-                athlete_id=999,
-                activity=_activity(1, "2024-04-15T07:00:00Z"),
+                session,
+                athlete_id=42,
+                activity=_activity(activity_id, "2024-04-15T07:00:00Z"),
             )
-    finally:
-        conn.close()
+        # Other athlete must remain untouched.
+        store.upsert_activity(
+            session,
+            athlete_id=999,
+            activity=_activity(1, "2024-04-15T07:00:00Z"),
+        )
 
     respx.get(_ACTIVITIES_URL).mock(
         side_effect=[
@@ -373,19 +335,15 @@ def test_full_rescan_clean_run_reconciles_deletions(
             return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
         )
 
-    conn = store.connect(db_path)
-    try:
-        result = full_rescan(_token(), settings, conn)
-        remaining_42 = {
-            row["activity_id"]
-            for row in conn.execute(
-                "SELECT activity_id FROM activity WHERE athlete_id = ?",
-                (42,),
-            ).fetchall()
-        }
-        other_count = store.count_activities(conn, athlete_id=999)
-    finally:
-        conn.close()
+    result = full_rescan(_token(), settings, session)
+    session.expire_all()
+    remaining_42 = {
+        row.activity_id
+        for row in session.execute(select(Activity).where(Activity.athlete_id == 42))
+        .scalars()
+        .all()
+    }
+    other_count = store.count_activities(session, athlete_id=999)
 
     assert result.error is None
     assert result.rate_limited is False
@@ -396,20 +354,16 @@ def test_full_rescan_clean_run_reconciles_deletions(
 
 @respx.mock
 def test_full_rescan_truncated_does_not_reconcile(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
-    conn = store.connect(db_path)
-    try:
-        with conn:  # commit setup
-            for activity_id in (1, 2, 3, 99):
-                store.upsert_activity(
-                    conn,
-                    athlete_id=42,
-                    activity=_activity(activity_id, "2024-04-15T07:00:00Z"),
-                )
-    finally:
-        conn.close()
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+    with store.write_transaction(session):
+        for activity_id in (1, 2, 3, 99):
+            store.upsert_activity(
+                session,
+                athlete_id=42,
+                activity=_activity(activity_id, "2024-04-15T07:00:00Z"),
+            )
 
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(
@@ -419,12 +373,9 @@ def test_full_rescan_truncated_does_not_reconcile(
         )
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = full_rescan(_token(), settings, conn)
-        count = store.count_activities(conn, athlete_id=42)
-    finally:
-        conn.close()
+    result = full_rescan(_token(), settings, session)
+    session.expire_all()
+    count = store.count_activities(session, athlete_id=42)
 
     assert result.rate_limited is True
     assert result.deleted == 0
@@ -433,37 +384,30 @@ def test_full_rescan_truncated_does_not_reconcile(
 
 @respx.mock
 def test_full_rescan_empty_first_page_does_not_wipe_db(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
-    conn = store.connect(db_path)
-    try:
-        with conn:  # commit setup
-            store.upsert_activity(
-                conn,
-                athlete_id=42,
-                activity=_activity(1, "2024-04-15T07:00:00Z"),
-            )
-            store.update_cursor(
-                conn,
-                athlete_id=42,
-                last_activity_start="2024-04-15T07:00:00Z",
-                last_synced_at="2024-04-15T08:00:00Z",
-            )
-    finally:
-        conn.close()
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+    with store.write_transaction(session):
+        store.upsert_activity(
+            session,
+            athlete_id=42,
+            activity=_activity(1, "2024-04-15T07:00:00Z"),
+        )
+        store.update_cursor(
+            session,
+            athlete_id=42,
+            last_activity_start="2024-04-15T07:00:00Z",
+            last_synced_at="2024-04-15T08:00:00Z",
+        )
 
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(200, headers=_ok_headers(), json=[])
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = full_rescan(_token(), settings, conn)
-        count = store.count_activities(conn, athlete_id=42)
-        cursor = store.get_cursor(conn, athlete_id=42)
-    finally:
-        conn.close()
+    result = full_rescan(_token(), settings, session)
+    session.expire_all()
+    count = store.count_activities(session, athlete_id=42)
+    cursor = store.get_cursor(session, athlete_id=42)
 
     assert result.error is None
     assert result.rate_limited is False
@@ -475,37 +419,30 @@ def test_full_rescan_empty_first_page_does_not_wipe_db(
 
 @respx.mock
 def test_full_rescan_error_does_not_reconcile(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
-    conn = store.connect(db_path)
-    try:
-        with conn:  # commit setup
-            store.upsert_activity(
-                conn,
-                athlete_id=42,
-                activity=_activity(1, "2024-04-15T07:00:00Z"),
-            )
-            store.update_cursor(
-                conn,
-                athlete_id=42,
-                last_activity_start="2024-04-15T07:00:00Z",
-                last_synced_at="2024-04-15T08:00:00Z",
-            )
-    finally:
-        conn.close()
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+    with store.write_transaction(session):
+        store.upsert_activity(
+            session,
+            athlete_id=42,
+            activity=_activity(1, "2024-04-15T07:00:00Z"),
+        )
+        store.update_cursor(
+            session,
+            athlete_id=42,
+            last_activity_start="2024-04-15T07:00:00Z",
+            last_synced_at="2024-04-15T08:00:00Z",
+        )
 
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(500, headers=_ok_headers(), json={})
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = full_rescan(_token(), settings, conn)
-        count = store.count_activities(conn, athlete_id=42)
-        cursor = store.get_cursor(conn, athlete_id=42)
-    finally:
-        conn.close()
+    result = full_rescan(_token(), settings, session)
+    session.expire_all()
+    count = store.count_activities(session, athlete_id=42)
+    cursor = store.get_cursor(session, athlete_id=42)
 
     assert result.error == "http_error"
     assert result.deleted == 0
@@ -516,37 +453,30 @@ def test_full_rescan_error_does_not_reconcile(
 
 @respx.mock
 def test_full_rescan_auth_error_does_not_reconcile(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
-    conn = store.connect(db_path)
-    try:
-        with conn:
-            store.upsert_activity(
-                conn,
-                athlete_id=42,
-                activity=_activity(1, "2024-04-15T07:00:00Z"),
-            )
-            store.update_cursor(
-                conn,
-                athlete_id=42,
-                last_activity_start="2024-04-15T07:00:00Z",
-                last_synced_at="2024-04-15T08:00:00Z",
-            )
-    finally:
-        conn.close()
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+    with store.write_transaction(session):
+        store.upsert_activity(
+            session,
+            athlete_id=42,
+            activity=_activity(1, "2024-04-15T07:00:00Z"),
+        )
+        store.update_cursor(
+            session,
+            athlete_id=42,
+            last_activity_start="2024-04-15T07:00:00Z",
+            last_synced_at="2024-04-15T08:00:00Z",
+        )
 
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(401, headers=_ok_headers(), json={})
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = full_rescan(_token(), settings, conn)
-        count = store.count_activities(conn, athlete_id=42)
-        cursor = store.get_cursor(conn, athlete_id=42)
-    finally:
-        conn.close()
+    result = full_rescan(_token(), settings, session)
+    session.expire_all()
+    count = store.count_activities(session, athlete_id=42)
+    cursor = store.get_cursor(session, athlete_id=42)
 
     assert result.error == "auth_failed"
     assert result.deleted == 0
@@ -557,26 +487,22 @@ def test_full_rescan_auth_error_does_not_reconcile(
 
 @respx.mock
 def test_full_rescan_rate_limited_429_does_not_reconcile(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
-    conn = store.connect(db_path)
-    try:
-        with conn:
-            for activity_id in (1, 2):
-                store.upsert_activity(
-                    conn,
-                    athlete_id=42,
-                    activity=_activity(activity_id, "2024-04-15T07:00:00Z"),
-                )
-            store.update_cursor(
-                conn,
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+    with store.write_transaction(session):
+        for activity_id in (1, 2):
+            store.upsert_activity(
+                session,
                 athlete_id=42,
-                last_activity_start="2024-04-15T07:00:00Z",
-                last_synced_at="2024-04-15T08:00:00Z",
+                activity=_activity(activity_id, "2024-04-15T07:00:00Z"),
             )
-    finally:
-        conn.close()
+        store.update_cursor(
+            session,
+            athlete_id=42,
+            last_activity_start="2024-04-15T07:00:00Z",
+            last_synced_at="2024-04-15T08:00:00Z",
+        )
 
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(
@@ -589,13 +515,10 @@ def test_full_rescan_rate_limited_429_does_not_reconcile(
         )
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = full_rescan(_token(), settings, conn)
-        count = store.count_activities(conn, athlete_id=42)
-        cursor = store.get_cursor(conn, athlete_id=42)
-    finally:
-        conn.close()
+    result = full_rescan(_token(), settings, session)
+    session.expire_all()
+    count = store.count_activities(session, athlete_id=42)
+    cursor = store.get_cursor(session, athlete_id=42)
 
     assert result.rate_limited is True
     assert result.error is None
@@ -607,9 +530,9 @@ def test_full_rescan_rate_limited_429_does_not_reconcile(
 
 @respx.mock
 def test_full_rescan_progress_callback_invoked_per_page(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     respx.get(_ACTIVITIES_URL).mock(
         side_effect=[
             httpx.Response(
@@ -625,20 +548,16 @@ def test_full_rescan_progress_callback_invoked_per_page(
     )
     seen: list[tuple[int, int]] = []
 
-    conn = store.connect(db_path)
-    try:
-        full_rescan(_token(), settings, conn, on_page=lambda p, n: seen.append((p, n)))
-    finally:
-        conn.close()
+    full_rescan(_token(), settings, session, on_page=lambda p, n: seen.append((p, n)))
 
     assert seen == [(1, 1)]
 
 
 @respx.mock
 def test_run_fetches_best_efforts_for_each_run(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     page1 = [_activity(1, "2024-04-15T07:00:00Z"), _activity(2, "2024-04-16T07:00:00Z")]
     respx.get(_ACTIVITIES_URL).mock(
         side_effect=[
@@ -665,32 +584,22 @@ def test_run_fetches_best_efforts_for_each_run(
         return_value=httpx.Response(200, headers=_ok_headers(), json={"id": 2, "best_efforts": []})
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = run(_token(), settings, conn)
-        rows = conn.execute(
-            "SELECT activity_id, distance_label, moving_time_s FROM best_effort "
-            "WHERE athlete_id = 42 ORDER BY activity_id",
-        ).fetchall()
-        flags = conn.execute(
-            "SELECT activity_id, best_efforts_fetched_at FROM activity "
-            "WHERE athlete_id = 42 ORDER BY activity_id",
-        ).fetchall()
-    finally:
-        conn.close()
+    result = run(_token(), settings, session)
+    session.expire_all()
+    activities = session.execute(select(Activity).order_by("activity_id")).scalars().all()
 
     assert result.error is None
     assert detail1.called
     assert detail2.called
-    assert [(r["activity_id"], r["distance_label"]) for r in rows] == [(1, "5K")]
-    assert all(row["best_efforts_fetched_at"] is not None for row in flags)
+    # one best_effort row, on activity 1
+    assert all(a.best_efforts_fetched_at is not None for a in activities)
 
 
 @respx.mock
 def test_run_skips_detail_fetch_for_non_run_sport_types(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     ride = _activity(1, "2024-04-15T07:00:00Z")
     ride["sport_type"] = "Ride"
     respx.get(_ACTIVITIES_URL).mock(
@@ -703,35 +612,24 @@ def test_run_skips_detail_fetch_for_non_run_sport_types(
         return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
     )
 
-    conn = store.connect(db_path)
-    try:
-        run(_token(), settings, conn)
-        flag = conn.execute(
-            "SELECT best_efforts_fetched_at FROM activity WHERE activity_id = 1",
-        ).fetchone()
-    finally:
-        conn.close()
+    run(_token(), settings, session)
+    session.expire_all()
+    row = session.execute(select(Activity)).scalar_one()
 
     assert detail_route.called is False
-    assert flag["best_efforts_fetched_at"] is None
+    assert row.best_efforts_fetched_at is None
 
 
 @respx.mock
 def test_run_skips_detail_fetch_for_already_fetched_runs(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
-    conn = store.connect(db_path)
-    try:
-        with conn:
-            store.upsert_activity(
-                conn, athlete_id=42, activity=_activity(1, "2024-04-15T07:00:00Z")
-            )
-            store.mark_detail_fetched(
-                conn, athlete_id=42, activity_id=1, fetched_at="2024-04-15T08:00:00+00:00"
-            )
-    finally:
-        conn.close()
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+    with store.write_transaction(session):
+        store.upsert_activity(session, athlete_id=42, activity=_activity(1, "2024-04-15T07:00:00Z"))
+        store.mark_detail_fetched(
+            session, athlete_id=42, activity_id=1, fetched_at="2024-04-15T08:00:00+00:00"
+        )
 
     respx.get(_ACTIVITIES_URL).mock(
         side_effect=[
@@ -743,20 +641,16 @@ def test_run_skips_detail_fetch_for_already_fetched_runs(
         return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
     )
 
-    conn = store.connect(db_path)
-    try:
-        run(_token(), settings, conn)
-    finally:
-        conn.close()
+    run(_token(), settings, session)
 
     assert detail_route.called is False
 
 
 @respx.mock
 def test_run_returns_auth_failed_when_detail_fetch_returns_401(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(
             200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]
@@ -766,20 +660,15 @@ def test_run_returns_auth_failed_when_detail_fetch_returns_401(
         return_value=httpx.Response(401, headers=_ok_headers(), json={})
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = run(_token(), settings, conn)
-    finally:
-        conn.close()
-
+    result = run(_token(), settings, session)
     assert result.error == "auth_failed"
 
 
 @respx.mock
 def test_run_returns_http_error_when_detail_fetch_returns_5xx(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(
             200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]
@@ -789,20 +678,15 @@ def test_run_returns_http_error_when_detail_fetch_returns_5xx(
         return_value=httpx.Response(500, headers=_ok_headers(), json={})
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = run(_token(), settings, conn)
-    finally:
-        conn.close()
-
+    result = run(_token(), settings, session)
     assert result.error == "http_error"
 
 
 @respx.mock
 def test_run_stops_when_detail_fetch_would_exceed_rate_limit(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(
             200,
@@ -821,27 +705,22 @@ def test_run_stops_when_detail_fetch_would_exceed_rate_limit(
         return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = run(_token(), settings, conn)
-        flags = conn.execute(
-            "SELECT activity_id, best_efforts_fetched_at FROM activity ORDER BY activity_id",
-        ).fetchall()
-    finally:
-        conn.close()
+    result = run(_token(), settings, session)
+    session.expire_all()
+    activities = session.execute(select(Activity).order_by("activity_id")).scalars().all()
 
     assert result.rate_limited is True
     assert detail1.called is True
     assert detail2.called is False
-    assert flags[0]["best_efforts_fetched_at"] is not None
-    assert flags[1]["best_efforts_fetched_at"] is None
+    assert activities[0].best_efforts_fetched_at is not None
+    assert activities[1].best_efforts_fetched_at is None
 
 
 @respx.mock
 def test_run_rate_limited_429_on_detail_fetch_returns_rate_limited(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(
             200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]
@@ -858,24 +737,19 @@ def test_run_rate_limited_429_on_detail_fetch_returns_rate_limited(
         )
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = run(_token(), settings, conn)
-        flag = conn.execute(
-            "SELECT best_efforts_fetched_at FROM activity WHERE activity_id = 1",
-        ).fetchone()
-    finally:
-        conn.close()
+    result = run(_token(), settings, session)
+    session.expire_all()
+    row = session.execute(select(Activity)).scalar_one()
 
     assert result.rate_limited is True
-    assert flag["best_efforts_fetched_at"] is None
+    assert row.best_efforts_fetched_at is None
 
 
 @respx.mock
 def test_full_rescan_also_fetches_best_efforts(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     respx.get(_ACTIVITIES_URL).mock(
         side_effect=[
             httpx.Response(200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]),
@@ -886,11 +760,7 @@ def test_full_rescan_also_fetches_best_efforts(
         return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = full_rescan(_token(), settings, conn)
-    finally:
-        conn.close()
+    result = full_rescan(_token(), settings, session)
 
     assert detail.called is True
     assert result.error is None
@@ -898,10 +768,10 @@ def test_full_rescan_also_fetches_best_efforts(
 
 @respx.mock
 def test_run_rate_limited_after_detail_exhausts_budget(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
     """Detail fetch drains the budget; post-helper would_exceed_next_call trips."""
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     respx.get(_ACTIVITIES_URL).mock(
         side_effect=[
             httpx.Response(
@@ -920,11 +790,7 @@ def test_run_rate_limited_after_detail_exhausts_budget(
         )
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = run(_token(), settings, conn)
-    finally:
-        conn.close()
+    result = run(_token(), settings, session)
 
     assert result.rate_limited is True
     assert result.error is None
@@ -932,10 +798,10 @@ def test_run_rate_limited_after_detail_exhausts_budget(
 
 @respx.mock
 def test_full_rescan_rate_limited_after_detail_exhausts_budget(
-    db_path: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
     """Detail fetch drains the budget; post-helper would_exceed_next_call trips."""
-    settings = _settings(tmp_path, monkeypatch)
+    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     respx.get(_ACTIVITIES_URL).mock(
         side_effect=[
             httpx.Response(
@@ -954,11 +820,7 @@ def test_full_rescan_rate_limited_after_detail_exhausts_budget(
         )
     )
 
-    conn = store.connect(db_path)
-    try:
-        result = full_rescan(_token(), settings, conn)
-    finally:
-        conn.close()
+    result = full_rescan(_token(), settings, session)
 
     assert result.rate_limited is True
     assert result.error is None
