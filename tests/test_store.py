@@ -228,6 +228,24 @@ def test_make_engine_enables_wal_journal_mode(engine: Engine) -> None:
     assert result == "wal"
 
 
+@pytest.mark.parametrize(
+    ("table", "column"),
+    [
+        ("activity; DROP TABLE x", "ok"),
+        ("activity", "x; DROP TABLE y"),
+        ("", "ok"),
+        ("ok", ""),
+        ("1bad", "ok"),
+        ("ok", "1bad"),
+    ],
+)
+def test_add_column_if_missing_rejects_unsafe_identifiers(
+    engine: Engine, table: str, column: str
+) -> None:
+    with engine.connect() as conn, pytest.raises(ValueError, match="unsafe SQL identifier"):
+        store._add_column_if_missing(conn, table, column, "TEXT")
+
+
 def test_upsert_writes_start_date_local(session: Session) -> None:
     store.upsert_activity(
         session,
