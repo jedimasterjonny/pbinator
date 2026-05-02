@@ -7,6 +7,7 @@ No Streamlit, no env reads, no global state.
 from __future__ import annotations
 
 import json
+import re
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -52,12 +53,22 @@ def write_transaction(session: Session) -> Iterator[None]:
         raise
 
 
+_SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
 def _add_column_if_missing(conn: sa.Connection, table: str, column: str, ddl: str) -> None:
     """Idempotent ALTER TABLE … ADD COLUMN guarded by PRAGMA table_info.
 
     Survives until Alembic lands. ``table`` and ``column`` come from
-    internal hardcoded calls; no user-controlled SQL.
+    internal hardcoded calls; no user-controlled SQL. The identifier
+    regex check exists to neuter a future call-site that forgets that.
+
+    Raises:
+        ValueError: if ``table`` or ``column`` is not a bare SQL identifier.
     """
+    if not _SQL_IDENTIFIER_RE.match(table) or not _SQL_IDENTIFIER_RE.match(column):
+        msg = f"unsafe SQL identifier: table={table!r} column={column!r}"
+        raise ValueError(msg)
     rows = conn.execute(text(f"PRAGMA table_info({table})")).all()
     existing = {row[1] for row in rows}  # row[1] = column name
     if column not in existing:
