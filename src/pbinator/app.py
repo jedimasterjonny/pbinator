@@ -359,7 +359,7 @@ def _render_whoop_tab(session: Session, athlete_id: int, settings: Settings) -> 
 def _render_logged_in(
     token: TokenPayload, settings: Settings, controller: CookieController
 ) -> None:
-    """Show the athlete header, sync UI, and the PBs tab."""
+    """Show the athlete header and the Sync, PBs, and Whoop tabs."""
     st.write(f"Logged in as {token.athlete_first_name} {token.athlete_last_name}")
 
     engine = _get_engine(str(settings.pbinator_db_path))
