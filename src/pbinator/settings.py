@@ -15,3 +15,4 @@ class Settings(BaseSettings):
     strava_client_secret: SecretStr
     strava_redirect_uri: str = "http://localhost:8501/"
     pbinator_db_path: Path = Path("data/pbinator.db")
+    whoop_csv_path: Path = Path("data/workouts.csv")
