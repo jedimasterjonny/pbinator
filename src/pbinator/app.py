@@ -328,6 +328,8 @@ def _render_whoop_tab(session: Session, athlete_id: int, settings: Settings) -> 
         st.success("Every Whoop workout has a Strava match.")
     else:
         reason_label = {"no_strava_match": "No Strava match", "unmapped_sport": "Unmapped sport"}
+        options = sorted({o.whoop.activity_name for o in result.whoop_only})
+        selected = st.multiselect("Filter by activity", options, default=options)
         rows_o = [
             {
                 "Whoop start (UTC)": o.whoop.start_utc.strftime("%Y-%m-%d %H:%M"),
@@ -336,6 +338,7 @@ def _render_whoop_tab(session: Session, athlete_id: int, settings: Settings) -> 
                 "Reason": reason_label[o.reason],
             }
             for o in sorted(result.whoop_only, key=lambda x: x.whoop.start_utc, reverse=True)
+            if o.whoop.activity_name in selected
         ]
         st.dataframe(rows_o, width="stretch")
 
