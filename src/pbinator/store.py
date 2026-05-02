@@ -6,10 +6,13 @@ No Streamlit, no env reads, no global state.
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from pbinator.best_efforts import BestEffortRow
 
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS activity (
@@ -38,36 +41,76 @@ CREATE TABLE IF NOT EXISTS sync_cursor (
     last_activity_start  TEXT,
     last_synced_at       TEXT
 );
+
+CREATE TABLE IF NOT EXISTS best_effort (
+    athlete_id     INTEGER NOT NULL,
+    activity_id    INTEGER NOT NULL,
+    distance_label TEXT    NOT NULL,
+    distance_m     REAL    NOT NULL,
+    moving_time_s  INTEGER NOT NULL,
+    elapsed_time_s INTEGER NOT NULL,
+    start_date     TEXT    NOT NULL,
+    PRIMARY KEY (athlete_id, activity_id, distance_label),
+    FOREIGN KEY (athlete_id, activity_id)
+        REFERENCES activity(athlete_id, activity_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_best_effort_athlete_label_time
+    ON best_effort (athlete_id, distance_label, moving_time_s);
 """
+
+
+def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
+    """Idempotent ALTER TABLE … ADD COLUMN guarded by PRAGMA table_info.
+
+    SQLite raises if the column already exists; this skips that path so
+    ``connect`` can re-run safely on an already-upgraded database.
+    """
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        # Both `table` and `column` come from internal hardcoded calls; no
+        # user-controlled SQL.
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
 
 
 def connect(path: Path) -> sqlite3.Connection:
     """Open the pbinator SQLite database, bootstrapping the schema if needed.
 
     Returns:
-        A connection with ``Row`` factory and WAL journaling enabled.
+        A connection with ``Row`` factory, WAL journaling, and foreign-key
+        enforcement enabled.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_SCHEMA_SQL)
+    _add_column_if_missing(conn, "activity", "start_date_local", "TEXT")
+    _add_column_if_missing(conn, "activity", "best_efforts_fetched_at", "TEXT")
+    with conn:
+        conn.execute(
+            "UPDATE activity "
+            "SET start_date_local = json_extract(raw_json, '$.start_date_local') "
+            "WHERE start_date_local IS NULL"
+        )
     return conn
 
 
 _UPSERT_ACTIVITY_SQL = """
 INSERT INTO activity (
-    athlete_id, activity_id, sport_type, start_date,
+    athlete_id, activity_id, sport_type, start_date, start_date_local,
     distance_m, moving_time_s, elapsed_time_s, total_elev_gain_m,
     name, raw_json, fetched_at
 ) VALUES (
-    :athlete_id, :activity_id, :sport_type, :start_date,
+    :athlete_id, :activity_id, :sport_type, :start_date, :start_date_local,
     :distance_m, :moving_time_s, :elapsed_time_s, :total_elev_gain_m,
     :name, :raw_json, :fetched_at
 )
 ON CONFLICT(athlete_id, activity_id) DO UPDATE SET
     sport_type        = excluded.sport_type,
     start_date        = excluded.start_date,
+    start_date_local  = excluded.start_date_local,
     distance_m        = excluded.distance_m,
     moving_time_s     = excluded.moving_time_s,
     elapsed_time_s    = excluded.elapsed_time_s,
@@ -92,6 +135,7 @@ def upsert_activity(
             "activity_id": int(activity["id"]),
             "sport_type": str(activity["sport_type"]),
             "start_date": str(activity["start_date"]),
+            "start_date_local": str(activity["start_date_local"]),
             "distance_m": float(activity["distance"]),
             "moving_time_s": int(activity["moving_time"]),
             "elapsed_time_s": int(activity["elapsed_time"]),
@@ -205,3 +249,80 @@ def delete_activities_not_in(
     sql = f"DELETE FROM activity WHERE athlete_id = ? AND activity_id NOT IN ({placeholders})"  # noqa: S608
     cursor = conn.execute(sql, (athlete_id, *(int(i) for i in kept_ids)))
     return cursor.rowcount
+
+
+_UPSERT_BEST_EFFORT_SQL = """
+INSERT INTO best_effort (
+    athlete_id, activity_id, distance_label,
+    distance_m, moving_time_s, elapsed_time_s, start_date
+) VALUES (
+    :athlete_id, :activity_id, :distance_label,
+    :distance_m, :moving_time_s, :elapsed_time_s, :start_date
+)
+ON CONFLICT(athlete_id, activity_id, distance_label) DO UPDATE SET
+    distance_m     = excluded.distance_m,
+    moving_time_s  = excluded.moving_time_s,
+    elapsed_time_s = excluded.elapsed_time_s,
+    start_date     = excluded.start_date
+"""
+
+
+def upsert_best_efforts(
+    conn: sqlite3.Connection,
+    *,
+    athlete_id: int,
+    activity_id: int,
+    efforts: Sequence[BestEffortRow],
+) -> None:
+    """Insert or update one activity's set of best_effort rows.
+
+    Args:
+        conn: SQLite connection.
+        athlete_id: The athlete's ID.
+        activity_id: The activity's ID.
+        efforts: Sequence of BestEffortRow instances to insert or update.
+    """
+    conn.executemany(
+        _UPSERT_BEST_EFFORT_SQL,
+        [
+            {
+                "athlete_id": athlete_id,
+                "activity_id": activity_id,
+                "distance_label": effort.distance_label,
+                "distance_m": effort.distance_m,
+                "moving_time_s": effort.moving_time_s,
+                "elapsed_time_s": effort.elapsed_time_s,
+                "start_date": effort.start_date,
+            }
+            for effort in efforts
+        ],
+    )
+
+
+def mark_detail_fetched(
+    conn: sqlite3.Connection,
+    *,
+    athlete_id: int,
+    activity_id: int,
+    fetched_at: str,
+) -> None:
+    """Stamp ``best_efforts_fetched_at`` on one activity row."""
+    conn.execute(
+        "UPDATE activity SET best_efforts_fetched_at = ? WHERE athlete_id = ? AND activity_id = ?",
+        (fetched_at, athlete_id, activity_id),
+    )
+
+
+def count_runs_awaiting_detail(conn: sqlite3.Connection, athlete_id: int) -> int:
+    """Return the count of Run activities for ``athlete_id`` lacking detail.
+
+    Returns:
+        Integer count.
+    """
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM activity "
+        "WHERE athlete_id = ? AND sport_type = 'Run' "
+        "AND best_efforts_fetched_at IS NULL",
+        (athlete_id,),
+    ).fetchone()
+    return int(row["n"])

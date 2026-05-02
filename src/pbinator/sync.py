@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
 from pbinator import activities_api, store
+from pbinator import best_efforts as best_efforts_api
 from pbinator.activities_api import AuthError, RateLimited
 
 if TYPE_CHECKING:
@@ -22,6 +23,14 @@ if TYPE_CHECKING:
     from pbinator.activities_api import ActivityPage, RateLimitUsage
     from pbinator.settings import Settings
     from pbinator.strava import TokenPayload
+
+
+class _RateBudgetError(Exception):
+    """Internal signal: pre-flight check tripped before a detail fetch."""
+
+    def __init__(self, usage: RateLimitUsage) -> None:
+        super().__init__("rate budget exhausted")
+        self.usage = usage
 
 
 @dataclass(frozen=True)
@@ -79,6 +88,87 @@ def _iso_to_epoch(iso_utc: str) -> int:
     return int(datetime.fromisoformat(iso_utc).timestamp())
 
 
+def _process_detail_fetches_for_page(  # noqa: PLR0913, PLR0917 — six params are all distinct concerns for this private helper
+    client: httpx.Client,
+    token_access: str,
+    conn: sqlite3.Connection,
+    athlete_id: int,
+    activities: list[dict[str, Any]],
+    usage_in: RateLimitUsage,
+) -> RateLimitUsage:
+    """Fetch detail + upsert best_efforts for each unfetched Run on a page.
+
+    Mutates the DB. Returns the latest ``RateLimitUsage`` observed.
+
+    Returns:
+        Updated ``RateLimitUsage`` after all detail fetches for this page.
+
+    Raises:
+        _RateBudgetError: when the preflight check trips before a fetch.
+    """
+    run_ids = [int(a["id"]) for a in activities if str(a["sport_type"]) == "Run"]
+    already_fetched: frozenset[int] = frozenset()
+    if run_ids:
+        placeholders = ",".join("?" for _ in run_ids)
+        sql = (
+            f"SELECT activity_id FROM activity "  # noqa: S608 — placeholders only
+            f"WHERE athlete_id = ? AND best_efforts_fetched_at IS NOT NULL "
+            f"AND activity_id IN ({placeholders})"
+        )
+        rows = conn.execute(sql, (athlete_id, *run_ids)).fetchall()
+        already_fetched = frozenset(int(r["activity_id"]) for r in rows)
+
+    usage = usage_in
+    for activity in activities:
+        if str(activity["sport_type"]) != "Run":
+            continue
+        if int(activity["id"]) in already_fetched:
+            continue
+        if would_exceed_next_call(usage):
+            raise _RateBudgetError(usage)
+        fetched = best_efforts_api.fetch_detail(
+            client, token_access, activity_id=int(activity["id"])
+        )
+        usage = fetched.usage
+        rows = best_efforts_api.parse_best_efforts(fetched.detail)
+        with conn:
+            store.upsert_best_efforts(
+                conn,
+                athlete_id=athlete_id,
+                activity_id=int(activity["id"]),
+                efforts=rows,
+            )
+            store.mark_detail_fetched(
+                conn,
+                athlete_id=athlete_id,
+                activity_id=int(activity["id"]),
+                fetched_at=_now_iso(),
+            )
+    return usage
+
+
+def _reconcile_deletions(
+    conn: sqlite3.Connection,
+    athlete_id: int,
+    seen_ids: set[int],
+    *,
+    rate_limited: bool,
+    error: str | None,
+) -> int:
+    """Delete activities for ``athlete_id`` not in ``seen_ids`` when safe to do so.
+
+    Only fires when the rescan completed without rate-limit truncation, without
+    errors, AND saw at least one activity.
+
+    Returns:
+        Number of rows deleted (0 when reconciliation is skipped).
+    """
+    if rate_limited or error is not None or not seen_ids:
+        return 0
+    with conn:
+        return store.delete_activities_not_in(conn, athlete_id=athlete_id, kept_ids=seen_ids)
+
+
 def run(
     token: TokenPayload,
     settings: Settings,  # noqa: ARG001 — reserved for future use; kept for interface symmetry
@@ -125,12 +215,23 @@ def run(
                         store.upsert_activity(conn, athlete_id=token.athlete_id, activity=activity)
                         inserted += 1
                         max_seen_start = max_iso(max_seen_start, str(activity["start_date"]))
+                usage = _process_detail_fetches_for_page(
+                    client,
+                    token.access_token,
+                    conn,
+                    token.athlete_id,
+                    page_data.activities,
+                    usage,
+                )
                 if on_page is not None:
                     on_page(page, len(page_data.activities))
                 if would_exceed_next_call(usage):
                     rate_limited = True
                     break
                 page += 1
+    except _RateBudgetError as exc:
+        rate_limited = True
+        usage = exc.usage
     except RateLimited as exc:
         rate_limited = True
         usage = exc.usage if exc.usage is not None else usage
@@ -209,12 +310,23 @@ def full_rescan(
                         seen_ids.add(int(activity["id"]))
                         inserted += 1
                         max_seen_start = max_iso(max_seen_start, str(activity["start_date"]))
+                usage = _process_detail_fetches_for_page(
+                    client,
+                    token.access_token,
+                    conn,
+                    token.athlete_id,
+                    page_data.activities,
+                    usage,
+                )
                 if on_page is not None:
                     on_page(page, len(page_data.activities))
                 if would_exceed_next_call(usage):
                     rate_limited = True
                     break
                 page += 1
+    except _RateBudgetError as exc:
+        rate_limited = True
+        usage = exc.usage
     except RateLimited as exc:
         rate_limited = True
         usage = exc.usage if exc.usage is not None else usage
@@ -223,14 +335,9 @@ def full_rescan(
     except httpx.HTTPError:
         error = "http_error"
 
-    deleted = 0
-    # See the SQLite commit gotcha at the top of this plan: every write must
-    # be inside `with conn:` to commit before the connection is closed.
-    if not rate_limited and error is None and seen_ids:
-        with conn:
-            deleted = store.delete_activities_not_in(
-                conn, athlete_id=token.athlete_id, kept_ids=seen_ids
-            )
+    deleted = _reconcile_deletions(
+        conn, token.athlete_id, seen_ids, rate_limited=rate_limited, error=error
+    )
 
     with conn:
         store.update_cursor(
