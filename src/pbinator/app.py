@@ -12,7 +12,7 @@ import streamlit as st
 from pydantic import ValidationError
 from streamlit_cookies_controller import CookieController
 
-from pbinator import store, sync
+from pbinator import pbs, store, sync
 from pbinator.settings import Settings
 from pbinator.strava import TokenPayload, build_authorize_url, exchange_code, refresh
 
@@ -57,10 +57,16 @@ def _read_cookie(controller: CookieController) -> TokenPayload | None:
 
 
 def _write_cookie(controller: CookieController, token: TokenPayload) -> None:
-    """Persist the token to the browser as a JSON-encoded cookie."""
+    """Persist the token to the browser as a JSON-encoded cookie.
+
+    Pass ``expires`` explicitly: streamlit-cookies-controller defaults it to
+    24h when omitted (cookie_controller.py:81-82), which would override the
+    90-day ``max_age`` and force the user to re-authorise after one day.
+    """
     controller.set(
         _COOKIE_NAME,
         token.model_dump_json(),
+        expires=datetime.now(UTC) + timedelta(seconds=_COOKIE_MAX_AGE_SECONDS),
         max_age=_COOKIE_MAX_AGE_SECONDS,
         same_site="lax",
         path="/",
@@ -110,7 +116,24 @@ def _format_resume_message(usage: RateLimitUsage | None) -> str:
     return f"Try again at {next_reset.strftime('%H:%M')} UTC."
 
 
-def _render_sync_result(result: SyncResult, controller: CookieController) -> None:
+def _backfill_suffix(conn: sqlite3.Connection, athlete_id: int) -> str:
+    """Suffix showing count of runs awaiting detail; empty if none.
+
+    Returns:
+        A string like " N Runs still awaiting detail." or "" if none.
+    """
+    awaiting = store.count_runs_awaiting_detail(conn, athlete_id=athlete_id)
+    if awaiting == 0:
+        return ""
+    return f" {awaiting} Runs still awaiting detail."
+
+
+def _render_sync_result(
+    result: SyncResult,
+    controller: CookieController,
+    conn: sqlite3.Connection,
+    athlete_id: int,
+) -> None:
     if result.error == "auth_failed":
         st.error("Session expired — please log in again.")
         if controller.get(_COOKIE_NAME) is not None:
@@ -120,19 +143,20 @@ def _render_sync_result(result: SyncResult, controller: CookieController) -> Non
     if result.error == "http_error":
         st.error("Sync failed. Please try again.")
         return
+    suffix = _backfill_suffix(conn, athlete_id)
     if result.rate_limited:
         st.warning(
             f"Rate-limited after {result.inserted_or_updated} activities. "
-            f"{_format_resume_message(result.usage)}"
+            f"{_format_resume_message(result.usage)}{suffix}"
         )
         return
     if result.deleted:
         st.success(
             f"Synced {result.inserted_or_updated} activities; "
-            f"removed {result.deleted} no longer on Strava."
+            f"removed {result.deleted} no longer on Strava.{suffix}"
         )
         return
-    st.success(f"Synced {result.inserted_or_updated} new activities.")
+    st.success(f"Synced {result.inserted_or_updated} new activities.{suffix}")
 
 
 def _run_sync_with_status(
@@ -143,15 +167,20 @@ def _run_sync_with_status(
     full: bool,
 ) -> SyncResult:
     label = "Full rescan…" if full else "Syncing…"
+    pages_seen = 0
     with st.status(label, expanded=True) as status:
 
         def on_page(page_number: int, count: int) -> None:
+            nonlocal pages_seen
+            pages_seen += 1
             status.write(f"Page {page_number} — {count} activities")
 
         if full:
             result = sync.full_rescan(token, settings, conn, on_page=on_page)
         else:
             result = sync.run(token, settings, conn, on_page=on_page)
+        if pages_seen == 0 and result.error is None and not result.rate_limited:
+            status.write("No new activities.")
         status.update(state="complete")
     return result
 
@@ -173,43 +202,73 @@ def _render_logged_out(settings: Settings, controller: CookieController) -> None
     st.link_button("Authorize with Strava", url)
 
 
+def _render_sync_tab(
+    token: TokenPayload,
+    settings: Settings,
+    db_conn: sqlite3.Connection,
+    controller: CookieController,
+) -> None:
+    """Render the Sync tab body (the existing logged-in UI)."""
+    count = store.count_activities(db_conn, athlete_id=token.athlete_id)
+    cursor = store.get_cursor(db_conn, athlete_id=token.athlete_id)
+    last_synced = cursor.last_synced_at if cursor is not None else None
+    st.write(f"Stored activities: **{count}**")
+    if last_synced:
+        st.caption(f"Last synced: {last_synced}")
+
+    col_sync, col_rescan, col_logout = st.columns(3)
+    clicked_sync = col_sync.button("Sync activities")
+    confirm_rescan = col_rescan.checkbox("Confirm full rescan")
+    clicked_rescan = col_rescan.button("Full rescan", disabled=not confirm_rescan)
+    clicked_logout = col_logout.button("Log out")
+
+    if clicked_sync or clicked_rescan:
+        # Do NOT call st.rerun() on success — it would wipe the status
+        # block and result message before the user can read them. The
+        # count display at the top is stale until the next interaction;
+        # that's an acceptable trade-off for v1.
+        result = _run_sync_with_status(token, settings, db_conn, full=clicked_rescan)
+        _render_sync_result(result, controller, db_conn, token.athlete_id)
+        if result.error == "auth_failed":
+            st.rerun()
+
+    if clicked_logout:
+        controller.remove(_COOKIE_NAME)
+        st.session_state.clear()
+        st.rerun()
+
+
+def _render_pbs_tab(db_conn: sqlite3.Connection, athlete_id: int) -> None:
+    """Render the PBs tab body."""
+    rows = pbs.compute_rows(db_conn, athlete_id=athlete_id)
+    if not rows:
+        st.info("No PBs yet — click Sync activities, then come back.")
+        return
+    values_df, mask_df = pbs.to_dataframe(rows)
+    pb_style = "background-color: rgba(78, 161, 255, 0.18); color: #4ea1ff; font-weight: 700"
+    styler = values_df.style.apply(
+        lambda col: [pb_style if mask_df.at[idx, col.name] else "" for idx in col.index],
+        axis=0,
+    )
+    st.dataframe(styler, width="stretch")
+    awaiting = store.count_runs_awaiting_detail(db_conn, athlete_id=athlete_id)
+    if awaiting > 0:
+        st.caption(f"{awaiting} Runs still awaiting detail — keep clicking Sync.")
+
+
 def _render_logged_in(
     token: TokenPayload, settings: Settings, controller: CookieController
 ) -> None:
-    """Show the athlete header, sync UI, and a logout button."""
+    """Show the athlete header, sync UI, and the PBs tab."""
     st.write(f"Logged in as {token.athlete_first_name} {token.athlete_last_name}")
 
     db_conn = store.connect(settings.pbinator_db_path)
     try:
-        count = store.count_activities(db_conn, athlete_id=token.athlete_id)
-        cursor = store.get_cursor(db_conn, athlete_id=token.athlete_id)
-        last_synced = cursor.last_synced_at if cursor is not None else None
-        st.write(f"Stored activities: **{count}**")
-        if last_synced:
-            st.caption(f"Last synced: {last_synced}")
-
-        col_sync, col_rescan, col_logout = st.columns(3)
-        clicked_sync = col_sync.button("Sync activities")
-        confirm_rescan = col_rescan.checkbox("Confirm full rescan")
-        clicked_rescan = col_rescan.button("Full rescan", disabled=not confirm_rescan)
-        clicked_logout = col_logout.button("Log out")
-
-        if clicked_sync or clicked_rescan:
-            # Do NOT call st.rerun() on success — it would wipe the status
-            # block and result message before the user can read them. The
-            # count display at the top is stale until the next interaction;
-            # that's an acceptable trade-off for v1.
-            result = _run_sync_with_status(token, settings, db_conn, full=clicked_rescan)
-            _render_sync_result(result, controller)
-            if result.error == "auth_failed":
-                # Cookie was cleared inside _render_sync_result; rerun so
-                # the logged-out view renders cleanly.
-                st.rerun()
-
-        if clicked_logout:
-            controller.remove(_COOKIE_NAME)
-            st.session_state.clear()
-            st.rerun()
+        tab_sync, tab_pbs = st.tabs(["Sync", "PBs"])
+        with tab_sync:
+            _render_sync_tab(token, settings, db_conn, controller)
+        with tab_pbs:
+            _render_pbs_tab(db_conn, token.athlete_id)
     finally:
         db_conn.close()
 
