@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from streamlit_cookies_controller import CookieController
 
-from pbinator import pbs, store, sync
+from pbinator import compare, pbs, store, sync, whoop
 from pbinator.settings import Settings
 from pbinator.strava import TokenPayload, build_authorize_url, exchange_code, refresh
 
@@ -270,6 +270,92 @@ def _render_pbs_tab(session: Session, athlete_id: int) -> None:
         st.caption(f"{awaiting} Runs still awaiting detail — keep clicking Sync.")
 
 
+def _format_signed_delta(seconds: int) -> str:
+    """Format a signed second-count as ``±Mm SSs`` or ``±Ss`` for ``|Δ| < 60``.
+
+    Returns:
+        A human-readable signed delta like ``+12s``, ``-1m 05s``, or ``0s``.
+    """
+    if seconds == 0:
+        return "0s"
+    sign = "+" if seconds > 0 else "-"
+    magnitude = abs(seconds)
+    minutes, remainder = divmod(magnitude, 60)
+    if minutes == 0:
+        return f"{sign}{remainder}s"
+    return f"{sign}{minutes}m {remainder:02d}s"
+
+
+def _render_whoop_tab(session: Session, athlete_id: int, settings: Settings) -> None:
+    """Render the Whoop comparison tab body."""
+    uploaded = st.file_uploader("Replace Whoop CSV for this session", type=["csv"])
+    if uploaded is not None:
+        text = uploaded.getvalue().decode("utf-8")
+    elif settings.whoop_csv_path.exists():
+        text = settings.whoop_csv_path.read_text(encoding="utf-8")
+    else:
+        st.info("Place your Whoop export at data/workouts.csv or upload one above.")
+        return
+
+    try:
+        workouts = whoop.parse_workouts(text)
+    except whoop.WhoopParseError as exc:
+        st.error(f"Could not parse Whoop CSV at line {exc.line_no}: {exc.reason}")
+        return
+
+    if not workouts:
+        st.write("No Whoop workouts in this file.")
+        return
+
+    pad = timedelta(seconds=compare.PAIRING_WINDOW_S)
+    lo = min(w.start_utc for w in workouts) - pad
+    hi = max(w.start_utc for w in workouts) + pad
+    activities = store.activities_in_range(session, athlete_id=athlete_id, start_utc=lo, end_utc=hi)
+    result = compare.compare(workouts, activities)
+
+    st.write(
+        f"Compared **{len(workouts)}** Whoop workouts against Strava — "
+        f"**{len(result.mismatches)}** time-mismatches, "
+        f"**{len(result.whoop_only)}** Whoop-only."
+    )
+
+    st.subheader("Time mismatches")
+    if not result.mismatches:
+        st.success("No time mismatches.")
+    else:
+        rows_m = [
+            {
+                "Whoop start (UTC)": m.whoop.start_utc.strftime("%Y-%m-%d %H:%M"),
+                "Sport": m.whoop.activity_name,
+                "Δ start": _format_signed_delta(m.delta_start_s),
+                "Δ end": _format_signed_delta(m.delta_end_s),
+                "Strava": f"https://www.strava.com/activities/{m.strava_activity_id}",
+            }
+            for m in sorted(result.mismatches, key=lambda x: x.whoop.start_utc, reverse=True)
+        ]
+        st.dataframe(
+            rows_m,
+            width="stretch",
+            column_config={"Strava": st.column_config.LinkColumn("Strava", display_text="open")},
+        )
+
+    st.subheader("Whoop-only")
+    if not result.whoop_only:
+        st.success("Every Whoop workout has a Strava match.")
+    else:
+        reason_label = {"no_strava_match": "No Strava match", "unmapped_sport": "Unmapped sport"}
+        rows_o = [
+            {
+                "Whoop start (UTC)": o.whoop.start_utc.strftime("%Y-%m-%d %H:%M"),
+                "Sport": o.whoop.activity_name,
+                "Duration (min)": o.whoop.duration_min,
+                "Reason": reason_label[o.reason],
+            }
+            for o in sorted(result.whoop_only, key=lambda x: x.whoop.start_utc, reverse=True)
+        ]
+        st.dataframe(rows_o, width="stretch")
+
+
 def _render_logged_in(
     token: TokenPayload, settings: Settings, controller: CookieController
 ) -> None:
@@ -278,11 +364,13 @@ def _render_logged_in(
 
     engine = _get_engine(str(settings.pbinator_db_path))
     with Session(engine) as session:
-        tab_sync, tab_pbs = st.tabs(["Sync", "PBs"])
+        tab_sync, tab_pbs, tab_whoop = st.tabs(["Sync", "PBs", "Whoop"])
         with tab_sync:
             _render_sync_tab(token, settings, session, controller)
         with tab_pbs:
             _render_pbs_tab(session, token.athlete_id)
+        with tab_whoop:
+            _render_whoop_tab(session, token.athlete_id, settings)
 
 
 def _handle_callback(settings: Settings, controller: CookieController) -> None:
