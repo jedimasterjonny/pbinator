@@ -167,15 +167,20 @@ def _run_sync_with_status(
     full: bool,
 ) -> SyncResult:
     label = "Full rescan…" if full else "Syncing…"
+    pages_seen = 0
     with st.status(label, expanded=True) as status:
 
         def on_page(page_number: int, count: int) -> None:
+            nonlocal pages_seen
+            pages_seen += 1
             status.write(f"Page {page_number} — {count} activities")
 
         if full:
             result = sync.full_rescan(token, settings, conn, on_page=on_page)
         else:
             result = sync.run(token, settings, conn, on_page=on_page)
+        if pages_seen == 0 and result.error is None and not result.rate_limited:
+            status.write("No new activities.")
         status.update(state="complete")
     return result
 
