@@ -135,3 +135,20 @@ def compare(
             )
 
     return WhoopComparison(mismatches=mismatches, whoop_only=whoop_only)
+
+
+def format_signed_delta(seconds: int) -> str:
+    """Format a signed second-count as ``±Mm SSs`` or ``±Ss`` for ``|Δ| < 60``.
+
+    Returns:
+        ``"0s"`` when ``seconds == 0``; otherwise a signed string with
+        minutes (when ``|seconds| >= 60``) and zero-padded remainder seconds.
+    """
+    if seconds == 0:
+        return "0s"
+    sign = "+" if seconds > 0 else "-"
+    magnitude = abs(seconds)
+    minutes, remainder = divmod(magnitude, 60)
+    if minutes == 0:
+        return f"{sign}{remainder}s"
+    return f"{sign}{minutes}m {remainder:02d}s"

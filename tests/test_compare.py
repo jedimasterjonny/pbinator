@@ -11,6 +11,7 @@ from pbinator.compare import (
     WhoopComparison,
     WhoopOnly,
     compare,
+    format_signed_delta,
 )
 from pbinator.models import Activity
 from pbinator.whoop import WhoopWorkout
@@ -267,6 +268,27 @@ def test_dataclasses_are_frozen() -> None:
 def test_thresholds_are_documented_values() -> None:
     assert PAIRING_WINDOW_S == 600
     assert MISMATCH_TOLERANCE_S == 120
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (0, "0s"),
+        (1, "+1s"),
+        (-1, "-1s"),
+        (59, "+59s"),
+        (-59, "-59s"),
+        (60, "+1m 00s"),
+        (-60, "-1m 00s"),
+        (65, "+1m 05s"),
+        (-65, "-1m 05s"),
+        (3600, "+60m 00s"),
+        (3661, "+61m 01s"),
+        (-3661, "-61m 01s"),
+    ],
+)
+def test_format_signed_delta(seconds: int, expected: str) -> None:
+    assert format_signed_delta(seconds) == expected
 
 
 def test_mismatch_dataclass_fields_present() -> None:

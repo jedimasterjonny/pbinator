@@ -270,22 +270,6 @@ def _render_pbs_tab(session: Session, athlete_id: int) -> None:
         st.caption(f"{awaiting} Runs still awaiting detail — keep clicking Sync.")
 
 
-def _format_signed_delta(seconds: int) -> str:
-    """Format a signed second-count as ``±Mm SSs`` or ``±Ss`` for ``|Δ| < 60``.
-
-    Returns:
-        A human-readable signed delta like ``+12s``, ``-1m 05s``, or ``0s``.
-    """
-    if seconds == 0:
-        return "0s"
-    sign = "+" if seconds > 0 else "-"
-    magnitude = abs(seconds)
-    minutes, remainder = divmod(magnitude, 60)
-    if minutes == 0:
-        return f"{sign}{remainder}s"
-    return f"{sign}{minutes}m {remainder:02d}s"
-
-
 def _render_whoop_tab(session: Session, athlete_id: int, settings: Settings) -> None:
     """Render the Whoop comparison tab body."""
     uploaded = st.file_uploader("Replace Whoop CSV for this session", type=["csv"])
@@ -327,8 +311,8 @@ def _render_whoop_tab(session: Session, athlete_id: int, settings: Settings) -> 
             {
                 "Whoop start (UTC)": m.whoop.start_utc.strftime("%Y-%m-%d %H:%M"),
                 "Sport": m.whoop.activity_name,
-                "Δ start": _format_signed_delta(m.delta_start_s),
-                "Δ end": _format_signed_delta(m.delta_end_s),
+                "Δ start": compare.format_signed_delta(m.delta_start_s),
+                "Δ end": compare.format_signed_delta(m.delta_end_s),
                 "Strava": f"https://www.strava.com/activities/{m.strava_activity_id}",
             }
             for m in sorted(result.mismatches, key=lambda x: x.whoop.start_utc, reverse=True)
