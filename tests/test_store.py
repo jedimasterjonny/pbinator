@@ -222,6 +222,12 @@ def test_make_engine_enables_foreign_keys(engine: Engine) -> None:
     assert result == 1
 
 
+def test_make_engine_enables_wal_journal_mode(engine: Engine) -> None:
+    with engine.connect() as conn:
+        result = conn.execute(sa.text("PRAGMA journal_mode")).scalar_one()
+    assert result == "wal"
+
+
 def test_upsert_writes_start_date_local(session: Session) -> None:
     store.upsert_activity(
         session,
