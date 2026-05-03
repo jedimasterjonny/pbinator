@@ -231,6 +231,24 @@ def test_compare_distance_beyond_tolerance_flags() -> None:
     assert distance_mismatches[0].delta == pytest.approx(11.0)
 
 
+def test_compare_start_local_within_tolerance_no_flag() -> None:
+    # Δ = 2s, within tolerance.
+    g = _g(start_local=datetime(2026, 5, 2, 13, 18, 6))  # noqa: DTZ001 — naive by design
+    s = _strava(start_date_local="2026-05-02T13:18:08")
+    result = garmin_compare.compare(garmin=[g], strava=[s])
+    assert all(m.field != "start_local" for m in result.mismatches)
+
+
+def test_compare_start_local_beyond_tolerance_flags() -> None:
+    # Δ = 5s: pairs (within ±60s window) but flags (beyond ±2s field tolerance).
+    g = _g(start_local=datetime(2026, 5, 2, 13, 18, 6))  # noqa: DTZ001 — naive by design
+    s = _strava(start_date_local="2026-05-02T13:18:11")
+    result = garmin_compare.compare(garmin=[g], strava=[s])
+    start_mismatches = [m for m in result.mismatches if m.field == "start_local"]
+    assert len(start_mismatches) == 1
+    assert start_mismatches[0].delta == pytest.approx(-5.0)
+
+
 def test_compare_skips_field_when_garmin_none() -> None:
     g = _g(calories=None)
     s = _strava(raw=_strava_raw(calories=999))

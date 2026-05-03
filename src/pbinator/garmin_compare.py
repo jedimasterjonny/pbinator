@@ -188,7 +188,7 @@ class FieldRule:
 FIELD_RULES: tuple[FieldRule, ...] = (
     FieldRule("sport_type", _g_sport, _s_sport, numeric=False, tolerance=0),
     FieldRule("title", _g_title, _s_name, numeric=False, tolerance=0),
-    FieldRule("start_local", _g_start, _s_start, numeric=True, tolerance=60),
+    FieldRule("start_local", _g_start, _s_start, numeric=True, tolerance=2),
     FieldRule("distance_m", _g_distance, _s_distance, numeric=True, tolerance=10),
     FieldRule("moving_time_s", _g_moving_time, _s_moving_time, numeric=True, tolerance=2),
     FieldRule("moving_time_alt_s", _g_moving_time_alt, _s_moving_time, numeric=True, tolerance=2),
