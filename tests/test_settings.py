@@ -32,6 +32,7 @@ def isolated_settings_cls(
     monkeypatch.delenv("STRAVA_CLIENT_SECRET", raising=False)
     monkeypatch.delenv("STRAVA_REDIRECT_URI", raising=False)
     monkeypatch.delenv("PBINATOR_DB_PATH", raising=False)
+    monkeypatch.delenv("WHOOP_CSV_PATH", raising=False)
     return _IsolatedSettings
 
 
@@ -98,3 +99,26 @@ def test_db_path_can_be_overridden(
     s = isolated_settings_cls()  # ty: ignore[missing-argument]
 
     assert s.pbinator_db_path == Path("/tmp/custom.db")  # noqa: S108 — same as above
+
+
+def test_whoop_csv_path_defaults_to_data_workouts_csv(
+    monkeypatch: pytest.MonkeyPatch, isolated_settings_cls: type[Settings]
+) -> None:
+    monkeypatch.setenv("STRAVA_CLIENT_ID", "client-123")
+    monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
+
+    s = isolated_settings_cls()  # ty: ignore[missing-argument]
+
+    assert s.whoop_csv_path == Path("data/workouts.csv")
+
+
+def test_whoop_csv_path_can_be_overridden(
+    monkeypatch: pytest.MonkeyPatch, isolated_settings_cls: type[Settings]
+) -> None:
+    monkeypatch.setenv("STRAVA_CLIENT_ID", "client-123")
+    monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
+    monkeypatch.setenv("WHOOP_CSV_PATH", "/tmp/custom-whoop.csv")  # noqa: S108 — test fixture path
+
+    s = isolated_settings_cls()  # ty: ignore[missing-argument]
+
+    assert s.whoop_csv_path == Path("/tmp/custom-whoop.csv")  # noqa: S108 — same as above

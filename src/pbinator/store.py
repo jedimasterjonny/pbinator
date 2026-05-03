@@ -303,3 +303,33 @@ def already_fetched_run_ids(
         )
     )
     return {int(row[0]) for row in result}
+
+
+def activities_in_range(
+    session: Session,
+    *,
+    athlete_id: int,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> list[Activity]:
+    """Return activities for ``athlete_id`` whose start_date lies in ``[start_utc, end_utc]``.
+
+    Both bounds are inclusive. Results are ordered by ``start_date`` ascending.
+    The bounds are formatted as Strava-style ISO-UTC strings (``...Z``) so the
+    comparison matches the lexical encoding of the stored ``start_date`` column.
+
+    Returns:
+        A list of ``Activity`` rows; empty if nothing falls in the window.
+    """
+    lo = start_utc.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    hi = end_utc.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    result = session.execute(
+        select(Activity)
+        .where(
+            Activity.athlete_id == athlete_id,
+            Activity.start_date >= lo,
+            Activity.start_date <= hi,
+        )
+        .order_by(Activity.start_date)
+    )
+    return list(result.scalars().all())
