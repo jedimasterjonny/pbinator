@@ -305,31 +305,55 @@ def already_fetched_run_ids(
     return {int(row[0]) for row in result}
 
 
+_VALID_RANGE_FIELDS = ("start_date", "start_date_local")
+_UTC_TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
+_LOCAL_TS_FMT = "%Y-%m-%dT%H:%M:%S"
+
+
 def activities_in_range(
     session: Session,
     *,
     athlete_id: int,
-    start_utc: datetime,
-    end_utc: datetime,
+    start: datetime,
+    end: datetime,
+    field: str = "start_date",
 ) -> list[Activity]:
-    """Return activities for ``athlete_id`` whose start_date lies in ``[start_utc, end_utc]``.
+    """Return activities for ``athlete_id`` whose ``field`` lies in ``[start, end]``.
 
-    Both bounds are inclusive. Results are ordered by ``start_date`` ascending.
-    The bounds are formatted as Strava-style ISO-UTC strings (``...Z``) so the
-    comparison matches the lexical encoding of the stored ``start_date`` column.
+    ``field`` must be one of ``"start_date"`` (UTC; bounds must be tz-aware)
+    or ``"start_date_local"`` (naive local; bounds must be naive). Both
+    bounds are inclusive. Results are ordered by ``field`` ascending.
+
+    The bounds are stringified to match the column's stored encoding so the
+    SQLite comparison is purely lexical: UTC rows end with ``Z``; local rows
+    do not.
 
     Returns:
         A list of ``Activity`` rows; empty if nothing falls in the window.
+
+    Raises:
+        ValueError: if ``field`` is not in the allowlist.
     """
-    lo = start_utc.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    hi = end_utc.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if field not in _VALID_RANGE_FIELDS:
+        msg = f"unknown field: {field!r}"
+        raise ValueError(msg)
+    if field == "start_date":
+        lo = start.astimezone(UTC).strftime(_UTC_TS_FMT)
+        hi = end.astimezone(UTC).strftime(_UTC_TS_FMT)
+        column = Activity.start_date
+    else:
+        lo = start.strftime(_LOCAL_TS_FMT)
+        hi = end.strftime(_LOCAL_TS_FMT)
+        column = Activity.start_date_local
+    # ``column`` is a SQLAlchemy ``InstrumentedAttribute`` whose ``>=``/``<=``
+    # build SQL expressions; ty models it as the underlying ``str | None``.
     result = session.execute(
         select(Activity)
         .where(
             Activity.athlete_id == athlete_id,
-            Activity.start_date >= lo,
-            Activity.start_date <= hi,
+            column >= lo,  # ty: ignore[unsupported-operator]
+            column <= hi,  # ty: ignore[unsupported-operator]
         )
-        .order_by(Activity.start_date)
+        .order_by(column)
     )
     return list(result.scalars().all())
