@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from streamlit_cookies_controller import CookieController
 
-from pbinator import compare, pbs, store, sync, whoop
+from pbinator import compare, garmin, garmin_compare, pbs, store, sync, whoop
 from pbinator.settings import Settings
 from pbinator.strava import TokenPayload, build_authorize_url, exchange_code, refresh
 
@@ -343,21 +343,175 @@ def _render_whoop_tab(session: Session, athlete_id: int, settings: Settings) -> 
         st.dataframe(rows_o, width="stretch")
 
 
+def _render_garmin_tab(session: Session, athlete_id: int, settings: Settings) -> None:
+    """Render the Garmin comparison tab body."""
+    uploaded = st.file_uploader("Replace Garmin CSV for this session", type=["csv"])
+    if uploaded is not None:
+        text = uploaded.getvalue().decode("utf-8")
+    elif settings.garmin_csv_path.exists():
+        text = settings.garmin_csv_path.read_text(encoding="utf-8")
+    else:
+        st.info("Place your Garmin export at data/Activities.csv or upload one above.")
+        return
+
+    try:
+        garmin_rows = garmin.parse_activities(text)
+    except garmin.GarminParseError as exc:
+        st.error(f"Could not parse Garmin CSV at line {exc.line_no}: {exc.reason}")
+        return
+
+    if not garmin_rows:
+        st.write("No Garmin activities in this file.")
+        return
+
+    pad = timedelta(seconds=garmin_compare.PAIRING_WINDOW_S)
+    lo = min(g.start_local for g in garmin_rows) - pad
+    hi = max(g.start_local for g in garmin_rows) + pad
+    strava_rows = store.activities_in_range(
+        session,
+        athlete_id=athlete_id,
+        start=lo,
+        end=hi,
+        field="start_date_local",
+    )
+    result = garmin_compare.compare(garmin=garmin_rows, strava=strava_rows)
+
+    pair_count = len({(m.garmin.start_local, m.strava_activity_id) for m in result.mismatches})
+    st.write(
+        f"Compared **{len(garmin_rows)}** Garmin activities against Strava — "
+        f"**{len(result.mismatches)}** field mismatches across **{pair_count}** pairs, "
+        f"**{len(result.garmin_only)}** Garmin-only, "
+        f"**{len(result.strava_only)}** Strava-only."
+    )
+
+    _render_garmin_field_mismatches(result.mismatches)
+    _render_garmin_only(result.garmin_only)
+    _render_strava_only(result.strava_only)
+
+
+_TIME_LIKE_FIELDS = frozenset(
+    {"start_local", "moving_time_s", "moving_time_alt_s", "elapsed_time_s"},
+)
+
+
+def _format_field_delta(field: str, delta: float | None) -> str:
+    """Format a Δ for one mismatch field; durations as ±Mm SSs, others as plain signed numbers.
+
+    Returns:
+        The formatted string; empty when ``delta`` is ``None``.
+    """
+    if delta is None:
+        return ""
+    if field in _TIME_LIKE_FIELDS:
+        return compare.format_signed_delta(round(delta))
+    sign = "+" if delta > 0 else ("-" if delta < 0 else "")
+    return f"{sign}{abs(delta):g}"
+
+
+def _render_garmin_field_mismatches(mismatches: list[garmin_compare.FieldMismatch]) -> None:
+    """Render the Field-mismatches section with a per-field selectbox filter."""
+    st.subheader("Field mismatches")
+    if not mismatches:
+        st.success("No field mismatches.")
+        return
+    fields = sorted({m.field for m in mismatches})
+    selected = st.selectbox("Field", options=["All", *fields])
+    visible = mismatches if selected == "All" else [m for m in mismatches if m.field == selected]
+    rows = [
+        {
+            "Date": m.garmin.start_local.strftime("%Y-%m-%d %H:%M"),
+            "Sport": m.garmin.activity_type,
+            "Title": m.garmin.title,
+            "Field": m.field,
+            "Garmin": str(m.garmin_value),
+            "Strava": str(m.strava_value),
+            "Δ": _format_field_delta(m.field, m.delta),
+            "Strava link": f"https://www.strava.com/activities/{m.strava_activity_id}",
+        }
+        for m in sorted(visible, key=lambda x: (x.garmin.start_local, x.field), reverse=True)
+    ]
+    st.dataframe(
+        rows,
+        width="stretch",
+        column_config={
+            "Strava link": st.column_config.LinkColumn("Strava link", display_text="open"),
+        },
+    )
+
+
+def _render_garmin_only(rows: list[garmin_compare.GarminOnly]) -> None:
+    """Render the Garmin-only section: rows with no Strava counterpart in the pairing window."""
+    st.subheader("Garmin-only")
+    if not rows:
+        st.success("Every Garmin activity has a Strava match.")
+        return
+    body = [
+        {
+            "Date": o.garmin.start_local.strftime("%Y-%m-%d %H:%M"),
+            "Sport": o.garmin.activity_type,
+            "Title": o.garmin.title,
+            "Distance (km)": round(o.garmin.distance_m / 1000, 2),
+            "Elapsed Time": _format_seconds_mm_ss(o.garmin.elapsed_time_s),
+        }
+        for o in sorted(rows, key=lambda x: x.garmin.start_local, reverse=True)
+    ]
+    st.dataframe(body, width="stretch")
+
+
+def _render_strava_only(rows: list[garmin_compare.StravaOnly]) -> None:
+    """Render the Strava-only section: unpaired Strava activities inside the Garmin date-range."""
+    st.subheader("Strava-only")
+    if not rows:
+        st.success("Every Strava activity in range has a Garmin match.")
+        return
+    body = [
+        {
+            "Date": o.activity.start_date_local or "",
+            "Sport": o.activity.sport_type,
+            "Name": o.activity.name,
+            "Distance (km)": round(o.activity.distance_m / 1000, 2),
+            "Elapsed Time": _format_seconds_mm_ss(o.activity.elapsed_time_s),
+            "Strava": f"https://www.strava.com/activities/{o.activity.activity_id}",
+        }
+        for o in sorted(rows, key=lambda x: x.activity.start_date_local or "", reverse=True)
+    ]
+    st.dataframe(
+        body,
+        width="stretch",
+        column_config={"Strava": st.column_config.LinkColumn("Strava", display_text="open")},
+    )
+
+
+def _format_seconds_mm_ss(seconds: int) -> str:
+    """Format a non-negative second-count as ``M:SS`` (or ``H:MM:SS`` for ≥ 1 hour).
+
+    Returns:
+        ``"M:SS"`` when ``seconds < 3600``; otherwise ``"H:MM:SS"``.
+    """
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
 def _render_logged_in(
     token: TokenPayload, settings: Settings, controller: CookieController
 ) -> None:
-    """Show the athlete header and the Sync, PBs, and Whoop tabs."""
+    """Show the athlete header and the Sync, PBs, Whoop, and Garmin tabs."""
     st.write(f"Logged in as {token.athlete_first_name} {token.athlete_last_name}")
 
     engine = _get_engine(str(settings.pbinator_db_path))
     with Session(engine) as session:
-        tab_sync, tab_pbs, tab_whoop = st.tabs(["Sync", "PBs", "Whoop"])
+        tab_sync, tab_pbs, tab_whoop, tab_garmin = st.tabs(["Sync", "PBs", "Whoop", "Garmin"])
         with tab_sync:
             _render_sync_tab(token, settings, session, controller)
         with tab_pbs:
             _render_pbs_tab(session, token.athlete_id)
         with tab_whoop:
             _render_whoop_tab(session, token.athlete_id, settings)
+        with tab_garmin:
+            _render_garmin_tab(session, token.athlete_id, settings)
 
 
 def _handle_callback(settings: Settings, controller: CookieController) -> None:
