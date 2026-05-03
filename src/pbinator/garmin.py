@@ -1,0 +1,200 @@
+"""Garmin Connect CSV-export parser.
+
+Pure logic: takes CSV text, returns a list of ``GarminActivity`` dataclasses.
+No I/O, no logging.
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+from dataclasses import dataclass
+from datetime import datetime
+
+_REQUIRED_COLUMNS: tuple[str, ...] = (
+    "Activity Type",
+    "Date",
+    "Title",
+    "Distance",
+    "Calories",
+    "Time",
+    "Avg HR",
+    "Max HR",
+    "Avg Run Cadence",
+    "Max Run Cadence",
+    "Total Ascent",
+    "Avg Power",
+    "Max Power",
+    "Normalized Power® (NP®)",
+    "Moving Time",
+    "Elapsed Time",
+    "Min Elevation",
+    "Max Elevation",
+)
+_BLANK = "--"
+_DATE_FMT = "%Y-%m-%d %H:%M:%S"
+
+
+def _parse_int_or_none(value: str, field: str, line_no: int) -> int | None:
+    raw = value.strip()
+    if raw in {_BLANK, ""}:
+        return None
+    try:
+        return int(raw)
+    except ValueError as exc:
+        msg = f"unparsable {field}: {value!r}"
+        raise GarminParseError(line_no, msg) from exc
+
+
+def _parse_hms_to_s(value: str, field: str, line_no: int) -> int | None:
+    raw = value.strip()
+    if raw in {_BLANK, ""}:
+        return None
+    parts = raw.split(":")
+    expected_parts = 3
+    if len(parts) != expected_parts:
+        msg = f"unparsable {field}: {value!r}"
+        raise GarminParseError(line_no, msg)
+    try:
+        hours, minutes, seconds = (int(p) for p in parts)
+    except ValueError as exc:
+        msg = f"unparsable {field}: {value!r}"
+        raise GarminParseError(line_no, msg) from exc
+    return hours * 3600 + minutes * 60 + seconds
+
+
+def _parse_distance_km_to_m(value: str, line_no: int) -> float:
+    raw = value.strip()
+    try:
+        return round(float(raw) * 1000, 1)
+    except ValueError as exc:
+        msg = f"unparsable Distance: {value!r}"
+        raise GarminParseError(line_no, msg) from exc
+
+
+def _parse_date(value: str, line_no: int) -> datetime:
+    try:
+        return datetime.strptime(value, _DATE_FMT)  # noqa: DTZ007 — Garmin Date is naive local by design
+    except ValueError as exc:
+        msg = f"unparsable Date: {value!r}"
+        raise GarminParseError(line_no, msg) from exc
+
+
+class GarminParseError(Exception):
+    """Raised when a Garmin CSV row cannot be parsed.
+
+    ``line_no`` is the 1-indexed file line; the header is line 1, the first
+    data row is line 2, and so on. ``reason`` is a human-readable message.
+    """
+
+    def __init__(self, line_no: int, reason: str) -> None:
+        super().__init__(f"line {line_no}: {reason}")
+        self.line_no = line_no
+        self.reason = reason
+
+
+@dataclass(frozen=True)
+class GarminActivity:
+    """One Garmin activity row, parsed.
+
+    ``start_local`` is naive (no ``tzinfo``). All numeric fields that Garmin
+    renders as ``--`` parse to ``None``.
+    """
+
+    activity_type: str
+    start_local: datetime
+    title: str
+    distance_m: float
+    moving_time_s: int | None
+    moving_time_alt_s: int | None
+    elapsed_time_s: int
+    calories: int | None
+    avg_hr: int | None
+    max_hr: int | None
+    total_ascent_m: int | None
+    min_elevation_m: int | None
+    max_elevation_m: int | None
+    avg_run_cadence: int | None
+    max_run_cadence: int | None
+    avg_power: int | None
+    max_power: int | None
+    normalized_power: int | None
+
+
+def _require_field(row: dict[str, str], field: str, line_no: int) -> str:
+    value = (row.get(field) or "").strip()
+    if not value:
+        msg = f"blank {field}"
+        raise GarminParseError(line_no, msg)
+    return value
+
+
+def parse_activities(text: str) -> list[GarminActivity]:
+    """Parse a Garmin Connect bulk-export CSV into ``GarminActivity`` rows.
+
+    Returns:
+        One ``GarminActivity`` per data row, in input order.
+
+    Raises:
+        GarminParseError: when a required column is missing or a row cannot
+            be parsed.
+    """
+    reader = csv.DictReader(io.StringIO(text))
+    fieldnames = reader.fieldnames or ()
+    missing = [c for c in _REQUIRED_COLUMNS if c not in fieldnames]
+    if missing:
+        msg = f"missing required columns: {missing}"
+        raise GarminParseError(1, msg)
+
+    out: list[GarminActivity] = []
+    for row in reader:
+        line_no = reader.line_num
+        activity_type = _require_field(row, "Activity Type", line_no)
+        title = _require_field(row, "Title", line_no)
+        start_local = _parse_date(_require_field(row, "Date", line_no), line_no)
+        distance_m = _parse_distance_km_to_m(_require_field(row, "Distance", line_no), line_no)
+        elapsed_raw = _require_field(row, "Elapsed Time", line_no)
+        elapsed_time_s = _parse_hms_to_s(elapsed_raw, "Elapsed Time", line_no)
+        if elapsed_time_s is None:
+            msg = f"unparsable Elapsed Time: {elapsed_raw!r}"
+            raise GarminParseError(line_no, msg)
+
+        out.append(
+            GarminActivity(
+                activity_type=activity_type,
+                start_local=start_local,
+                title=title,
+                distance_m=distance_m,
+                moving_time_s=_parse_hms_to_s(row.get("Time", ""), "Time", line_no),
+                moving_time_alt_s=_parse_hms_to_s(
+                    row.get("Moving Time", ""), "Moving Time", line_no
+                ),
+                elapsed_time_s=elapsed_time_s,
+                calories=_parse_int_or_none(row.get("Calories", ""), "Calories", line_no),
+                avg_hr=_parse_int_or_none(row.get("Avg HR", ""), "Avg HR", line_no),
+                max_hr=_parse_int_or_none(row.get("Max HR", ""), "Max HR", line_no),
+                total_ascent_m=_parse_int_or_none(
+                    row.get("Total Ascent", ""), "Total Ascent", line_no
+                ),
+                min_elevation_m=_parse_int_or_none(
+                    row.get("Min Elevation", ""), "Min Elevation", line_no
+                ),
+                max_elevation_m=_parse_int_or_none(
+                    row.get("Max Elevation", ""), "Max Elevation", line_no
+                ),
+                avg_run_cadence=_parse_int_or_none(
+                    row.get("Avg Run Cadence", ""), "Avg Run Cadence", line_no
+                ),
+                max_run_cadence=_parse_int_or_none(
+                    row.get("Max Run Cadence", ""), "Max Run Cadence", line_no
+                ),
+                avg_power=_parse_int_or_none(row.get("Avg Power", ""), "Avg Power", line_no),
+                max_power=_parse_int_or_none(row.get("Max Power", ""), "Max Power", line_no),
+                normalized_power=_parse_int_or_none(
+                    row.get("Normalized Power® (NP®)", ""),
+                    "Normalized Power",
+                    line_no,
+                ),
+            )
+        )
+    return out
