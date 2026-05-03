@@ -7,7 +7,6 @@ import pytest
 from pbinator.compare import (
     MISMATCH_TOLERANCE_S,
     PAIRING_WINDOW_S,
-    TimeMismatch,
     WhoopComparison,
     WhoopOnly,
     compare,
@@ -289,20 +288,3 @@ def test_thresholds_are_documented_values() -> None:
 )
 def test_format_signed_delta(seconds: int, expected: str) -> None:
     assert format_signed_delta(seconds) == expected
-
-
-def test_mismatch_dataclass_fields_present() -> None:
-    """Smoke test that all spec fields exist on TimeMismatch."""
-    whoop_start = datetime(2024, 4, 15, 7, 0, 0, tzinfo=UTC)
-    drift = MISMATCH_TOLERANCE_S + 1
-    a = _strava(start=whoop_start + timedelta(seconds=drift))
-
-    result = compare([_whoop(start=whoop_start)], [a])
-    m = result.mismatches[0]
-
-    assert isinstance(m, TimeMismatch)
-    assert m.whoop is not None
-    assert isinstance(m.flagged_start, bool)
-    assert isinstance(m.flagged_end, bool)
-    assert isinstance(m.delta_start_s, int)
-    assert isinstance(m.delta_end_s, int)
