@@ -294,7 +294,7 @@ def _render_whoop_tab(session: Session, athlete_id: int, settings: Settings) -> 
     pad = timedelta(seconds=compare.PAIRING_WINDOW_S)
     lo = min(w.start_utc for w in workouts) - pad
     hi = max(w.start_utc for w in workouts) + pad
-    activities = store.activities_in_range(session, athlete_id=athlete_id, start_utc=lo, end_utc=hi)
+    activities = store.activities_in_range(session, athlete_id=athlete_id, start=lo, end=hi)
     result = compare.compare(workouts, activities)
 
     st.write(

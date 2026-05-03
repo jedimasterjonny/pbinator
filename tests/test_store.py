@@ -613,8 +613,8 @@ def test_activities_in_range_inclusive_bounds(session: Session) -> None:
     rows = store.activities_in_range(
         session,
         athlete_id=42,
-        start_utc=datetime(2024, 4, 15, 7, 0, 0, tzinfo=UTC),
-        end_utc=datetime(2024, 4, 15, 9, 0, 0, tzinfo=UTC),
+        start=datetime(2024, 4, 15, 7, 0, 0, tzinfo=UTC),
+        end=datetime(2024, 4, 15, 9, 0, 0, tzinfo=UTC),
     )
 
     ids = [a.activity_id for a in rows]
@@ -637,8 +637,8 @@ def test_activities_in_range_excludes_outside_window(session: Session) -> None:
     rows = store.activities_in_range(
         session,
         athlete_id=42,
-        start_utc=datetime(2024, 4, 15, 7, 0, 0, tzinfo=UTC),
-        end_utc=datetime(2024, 4, 15, 9, 0, 0, tzinfo=UTC),
+        start=datetime(2024, 4, 15, 7, 0, 0, tzinfo=UTC),
+        end=datetime(2024, 4, 15, 9, 0, 0, tzinfo=UTC),
     )
 
     assert rows == []
@@ -660,8 +660,8 @@ def test_activities_in_range_scopes_by_athlete(session: Session) -> None:
     rows = store.activities_in_range(
         session,
         athlete_id=1,
-        start_utc=datetime(2024, 4, 15, 7, 0, 0, tzinfo=UTC),
-        end_utc=datetime(2024, 4, 15, 9, 0, 0, tzinfo=UTC),
+        start=datetime(2024, 4, 15, 7, 0, 0, tzinfo=UTC),
+        end=datetime(2024, 4, 15, 9, 0, 0, tzinfo=UTC),
     )
 
     assert [a.athlete_id for a in rows] == [1]
@@ -688,8 +688,92 @@ def test_activities_in_range_orders_by_start_date(session: Session) -> None:
     rows = store.activities_in_range(
         session,
         athlete_id=42,
-        start_utc=datetime(2024, 4, 15, 6, 0, 0, tzinfo=UTC),
-        end_utc=datetime(2024, 4, 15, 10, 0, 0, tzinfo=UTC),
+        start=datetime(2024, 4, 15, 6, 0, 0, tzinfo=UTC),
+        end=datetime(2024, 4, 15, 10, 0, 0, tzinfo=UTC),
+    )
+
+    assert [a.activity_id for a in rows] == [2, 3, 1]
+
+
+def test_activities_in_range_filters_by_start_date_local(session: Session) -> None:
+    store.upsert_activity(
+        session,
+        athlete_id=42,
+        activity=_summary_activity(
+            activity_id=1,
+            start_date="2024-04-15T07:00:00Z",
+            start_date_local="2024-04-15T08:00:00",
+        ),
+    )
+    store.upsert_activity(
+        session,
+        athlete_id=42,
+        activity=_summary_activity(
+            activity_id=2,
+            start_date="2024-04-15T08:00:00Z",
+            start_date_local="2024-04-15T09:00:00",
+        ),
+    )
+    session.commit()
+
+    rows = store.activities_in_range(
+        session,
+        athlete_id=42,
+        start=datetime(2024, 4, 15, 8, 30, 0),  # naive (local)  # noqa: DTZ001
+        end=datetime(2024, 4, 15, 9, 30, 0),  # naive (local)  # noqa: DTZ001
+        field="start_date_local",
+    )
+
+    assert [a.activity_id for a in rows] == [2]
+
+
+def test_activities_in_range_rejects_unknown_field(session: Session) -> None:
+    with pytest.raises(ValueError, match="unknown field"):
+        store.activities_in_range(
+            session,
+            athlete_id=42,
+            start=datetime(2024, 4, 15, 7, 0, 0, tzinfo=UTC),
+            end=datetime(2024, 4, 15, 9, 0, 0, tzinfo=UTC),
+            field="injection; DROP TABLE activity",
+        )
+
+
+def test_activities_in_range_orders_by_start_date_local(session: Session) -> None:
+    store.upsert_activity(
+        session,
+        athlete_id=42,
+        activity=_summary_activity(
+            activity_id=1,
+            start_date="2024-04-15T09:00:00Z",
+            start_date_local="2024-04-15T11:00:00",
+        ),
+    )
+    store.upsert_activity(
+        session,
+        athlete_id=42,
+        activity=_summary_activity(
+            activity_id=2,
+            start_date="2024-04-15T07:00:00Z",
+            start_date_local="2024-04-15T09:00:00",
+        ),
+    )
+    store.upsert_activity(
+        session,
+        athlete_id=42,
+        activity=_summary_activity(
+            activity_id=3,
+            start_date="2024-04-15T08:00:00Z",
+            start_date_local="2024-04-15T10:00:00",
+        ),
+    )
+    session.commit()
+
+    rows = store.activities_in_range(
+        session,
+        athlete_id=42,
+        start=datetime(2024, 4, 15, 8, 0, 0),  # noqa: DTZ001
+        end=datetime(2024, 4, 15, 12, 0, 0),  # noqa: DTZ001
+        field="start_date_local",
     )
 
     assert [a.activity_id for a in rows] == [2, 3, 1]
