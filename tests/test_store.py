@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -589,3 +590,106 @@ def test_session_returns_typed_models(session: Session) -> None:
     assert len(rows) == 1
     assert rows[0].name == "Morning Run"
     assert abs(rows[0].distance_m - 5023.4) < 1e-9  # float equality
+
+
+def test_activities_in_range_inclusive_bounds(session: Session) -> None:
+    store.upsert_activity(
+        session,
+        athlete_id=42,
+        activity=_summary_activity(activity_id=1, start_date="2024-04-15T07:00:00Z"),
+    )
+    store.upsert_activity(
+        session,
+        athlete_id=42,
+        activity=_summary_activity(activity_id=2, start_date="2024-04-15T08:00:00Z"),
+    )
+    store.upsert_activity(
+        session,
+        athlete_id=42,
+        activity=_summary_activity(activity_id=3, start_date="2024-04-15T09:00:00Z"),
+    )
+    session.commit()
+
+    rows = store.activities_in_range(
+        session,
+        athlete_id=42,
+        start_utc=datetime(2024, 4, 15, 7, 0, 0, tzinfo=UTC),
+        end_utc=datetime(2024, 4, 15, 9, 0, 0, tzinfo=UTC),
+    )
+
+    ids = [a.activity_id for a in rows]
+    assert ids == [1, 2, 3]
+
+
+def test_activities_in_range_excludes_outside_window(session: Session) -> None:
+    store.upsert_activity(
+        session,
+        athlete_id=42,
+        activity=_summary_activity(activity_id=1, start_date="2024-04-15T06:00:00Z"),
+    )
+    store.upsert_activity(
+        session,
+        athlete_id=42,
+        activity=_summary_activity(activity_id=2, start_date="2024-04-15T10:00:00Z"),
+    )
+    session.commit()
+
+    rows = store.activities_in_range(
+        session,
+        athlete_id=42,
+        start_utc=datetime(2024, 4, 15, 7, 0, 0, tzinfo=UTC),
+        end_utc=datetime(2024, 4, 15, 9, 0, 0, tzinfo=UTC),
+    )
+
+    assert rows == []
+
+
+def test_activities_in_range_scopes_by_athlete(session: Session) -> None:
+    store.upsert_activity(
+        session,
+        athlete_id=1,
+        activity=_summary_activity(activity_id=1, start_date="2024-04-15T08:00:00Z"),
+    )
+    store.upsert_activity(
+        session,
+        athlete_id=2,
+        activity=_summary_activity(activity_id=1, start_date="2024-04-15T08:00:00Z"),
+    )
+    session.commit()
+
+    rows = store.activities_in_range(
+        session,
+        athlete_id=1,
+        start_utc=datetime(2024, 4, 15, 7, 0, 0, tzinfo=UTC),
+        end_utc=datetime(2024, 4, 15, 9, 0, 0, tzinfo=UTC),
+    )
+
+    assert [a.athlete_id for a in rows] == [1]
+
+
+def test_activities_in_range_orders_by_start_date(session: Session) -> None:
+    store.upsert_activity(
+        session,
+        athlete_id=42,
+        activity=_summary_activity(activity_id=1, start_date="2024-04-15T09:00:00Z"),
+    )
+    store.upsert_activity(
+        session,
+        athlete_id=42,
+        activity=_summary_activity(activity_id=2, start_date="2024-04-15T07:00:00Z"),
+    )
+    store.upsert_activity(
+        session,
+        athlete_id=42,
+        activity=_summary_activity(activity_id=3, start_date="2024-04-15T08:00:00Z"),
+    )
+    session.commit()
+
+    rows = store.activities_in_range(
+        session,
+        athlete_id=42,
+        start_utc=datetime(2024, 4, 15, 6, 0, 0, tzinfo=UTC),
+        end_utc=datetime(2024, 4, 15, 10, 0, 0, tzinfo=UTC),
+    )
+
+    assert [a.activity_id for a in rows] == [2, 3, 1]

@@ -1,7 +1,8 @@
 # pbinator
 
-A small Streamlit app that signs in with Strava and surfaces your running
-personal bests across the ten standard race distances.
+A small Streamlit app that signs in with Strava, surfaces your running
+personal bests across the ten standard race distances, and reconciles your
+activities against a Whoop bulk-export CSV.
 
 ## Setup
 
@@ -32,7 +33,7 @@ Strava**, approve on the Strava consent screen, and you should return logged in
 as your athlete. The session is persisted in a browser cookie for 90 days and
 the access token is refreshed automatically before expiry.
 
-The logged-in view has two tabs: **Sync** and **PBs**.
+The logged-in view has three tabs: **Sync**, **PBs**, and **Whoop**.
 
 The **Sync** tab is where you click **Sync activities** to populate
 `data/pbinator.db` with your Strava history. The first sync paginates
@@ -51,6 +52,20 @@ broken on that date are highlighted; other cells show the running best
 as of that date, or an em-dash if no PB has been set at that distance
 yet. While backfill is still in progress, the tab shows a small caption
 telling you how many Runs are awaiting detail.
+
+The **Whoop** tab compares a Whoop bulk-export CSV against your Strava
+activities, treating Strava as the source of truth. By default it reads
+`data/workouts.csv`; a file uploader on the tab lets you swap in a
+different CSV for the current session. Whoop and Strava activities are
+paired sport-aware within ±10 minutes of each other; pairs whose start
+or end time differ by more than ±2 minutes appear in the **Time
+mismatches** table (with a clickable Strava link). Whoop rows with no
+Strava match — or whose Whoop sport doesn't map to a Strava `sport_type`
+(e.g. `Pilates`, `Activity`) — appear in the **Whoop-only** table,
+which has a "Filter by activity" multiselect to narrow it down. The
+Whoop CSV format must include `Cycle timezone`, `Workout start time`,
+`Workout end time`, `Duration (min)`, and `Activity name`; distance is
+not compared because the Whoop export does not carry it.
 
 ## Development
 

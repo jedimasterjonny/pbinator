@@ -28,3 +28,6 @@ data/
 
 # Brainstorming companion artefacts
 .superpowers/
+
+# Git worktrees
+.worktrees/
