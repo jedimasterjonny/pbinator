@@ -64,6 +64,11 @@ def test_parse_hms_to_s_dashed_positions_return_none() -> None:
     assert garmin._parse_hms_to_s("--:--:--", "Moving Time", 4) is None
 
 
+def test_parse_hms_to_s_rounds_fractional_seconds() -> None:
+    assert garmin._parse_hms_to_s("00:09:25.4", "Moving Time", 4) == 565
+    assert garmin._parse_hms_to_s("00:09:25.6", "Moving Time", 4) == 566
+
+
 def test_parse_hms_to_s_rejects_malformed() -> None:
     with pytest.raises(garmin.GarminParseError) as exc:
         garmin._parse_hms_to_s("12:99", "Time", 4)
