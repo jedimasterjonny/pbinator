@@ -60,6 +60,10 @@ def test_parse_hms_to_s_blank_returns_none() -> None:
     assert garmin._parse_hms_to_s("--", "Time", 4) is None
 
 
+def test_parse_hms_to_s_dashed_positions_return_none() -> None:
+    assert garmin._parse_hms_to_s("--:--:--", "Moving Time", 4) is None
+
+
 def test_parse_hms_to_s_rejects_malformed() -> None:
     with pytest.raises(garmin.GarminParseError) as exc:
         garmin._parse_hms_to_s("12:99", "Time", 4)

@@ -32,6 +32,7 @@ _REQUIRED_COLUMNS: tuple[str, ...] = (
     "Max Elevation",
 )
 _BLANK = "--"
+_HMS_BLANK = "--:--:--"
 _DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
 
@@ -49,7 +50,9 @@ def _parse_int_or_none(value: str, field: str, line_no: int) -> int | None:
 
 def _parse_hms_to_s(value: str, field: str, line_no: int) -> int | None:
     raw = value.strip()
-    if raw in {_BLANK, ""}:
+    # Garmin uses two blank-sentinel shapes for duration cells: "--" and the
+    # literal-position form "--:--:--".
+    if raw in {_BLANK, "", _HMS_BLANK}:
         return None
     parts = raw.split(":")
     expected_parts = 3
