@@ -83,10 +83,6 @@ def _g_moving_time(g: GarminActivity) -> int | None:
     return g.moving_time_s
 
 
-def _g_moving_time_alt(g: GarminActivity) -> int | None:
-    return g.moving_time_alt_s
-
-
 def _s_moving_time(a: Activity, _raw: dict[str, Any]) -> int:
     return a.moving_time_s
 
@@ -182,7 +178,6 @@ FIELD_RULES: tuple[FieldRule, ...] = (
     FieldRule("start_local", _g_start, _s_start, numeric=True, tolerance=2),
     FieldRule("distance_m", _g_distance, _s_distance, numeric=True, tolerance=10),
     FieldRule("moving_time_s", _g_moving_time, _s_moving_time, numeric=True, tolerance=2),
-    FieldRule("moving_time_alt_s", _g_moving_time_alt, _s_moving_time, numeric=True, tolerance=2),
     FieldRule("elapsed_time_s", _g_elapsed, _s_elapsed, numeric=True, tolerance=2),
     FieldRule("calories", _g_calories, _s_calories, numeric=True, tolerance=1),
     FieldRule("avg_hr", _g_avg_hr, _s_avg_hr, numeric=True, tolerance=1),

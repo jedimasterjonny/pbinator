@@ -17,7 +17,6 @@ def _g(  # noqa: PLR0913 — test helper builder
     distance_m: float = 9010.0,
     elapsed_time_s: int = 3208,
     moving_time_s: int | None = 3191,
-    moving_time_alt_s: int | None = None,
     calories: int | None = 631,
     avg_hr: int | None = 156,
     max_hr: int | None = 168,
@@ -33,7 +32,6 @@ def _g(  # noqa: PLR0913 — test helper builder
         title=title,
         distance_m=distance_m,
         moving_time_s=moving_time_s,
-        moving_time_alt_s=moving_time_alt_s,
         elapsed_time_s=elapsed_time_s,
         calories=calories,
         avg_hr=avg_hr,
@@ -94,7 +92,7 @@ def _strava_raw(  # noqa: PLR0913 — test helper builder
     return {k: v for k, v in candidates.items() if v is not None}
 
 
-def test_field_rules_include_all_15_entries() -> None:
+def test_field_rules_include_all_14_entries() -> None:
     names = [r.name for r in garmin_compare.FIELD_RULES]
     assert names == [
         "sport_type",
@@ -102,7 +100,6 @@ def test_field_rules_include_all_15_entries() -> None:
         "start_local",
         "distance_m",
         "moving_time_s",
-        "moving_time_alt_s",
         "elapsed_time_s",
         "calories",
         "avg_hr",

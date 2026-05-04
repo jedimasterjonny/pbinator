@@ -23,7 +23,6 @@ _REQUIRED_COLUMNS: tuple[str, ...] = (
     "Avg Run Cadence",
     "Max Run Cadence",
     "Total Ascent",
-    "Moving Time",
     "Elapsed Time",
     "Min Elevation",
     "Max Elevation",
@@ -111,7 +110,6 @@ class GarminActivity:
     title: str
     distance_m: float
     moving_time_s: int | None
-    moving_time_alt_s: int | None
     elapsed_time_s: int
     calories: int | None
     avg_hr: int | None
@@ -168,9 +166,6 @@ def parse_activities(text: str) -> list[GarminActivity]:
                 title=title,
                 distance_m=distance_m,
                 moving_time_s=_parse_hms_to_s(row.get("Time", ""), "Time", line_no),
-                moving_time_alt_s=_parse_hms_to_s(
-                    row.get("Moving Time", ""), "Moving Time", line_no
-                ),
                 elapsed_time_s=elapsed_time_s,
                 calories=_parse_int_or_none(row.get("Calories", ""), "Calories", line_no),
                 avg_hr=_parse_int_or_none(row.get("Avg HR", ""), "Avg HR", line_no),

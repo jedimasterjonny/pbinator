@@ -129,7 +129,6 @@ def _row(  # noqa: PLR0913 — test helper builder
     avg_run_cadence: str = "158",
     max_run_cadence: str = "163",
     total_ascent: str = "55",
-    moving_time: str = "--",
     elapsed_time: str = "00:53:28",
     min_elev: str = "72",
     max_elev: str = "92",
@@ -170,7 +169,7 @@ def _row(  # noqa: PLR0913 — test helper builder
         "2",
         "--",
         "--",
-        moving_time,
+        "--",
         elapsed_time,
         min_elev,
         max_elev,
@@ -189,7 +188,6 @@ def test_parse_one_row_populates_dataclass() -> None:
     assert g.title == "Easy Run - 9km"
     assert g.distance_m == pytest.approx(9010.0)
     assert g.moving_time_s == 3191  # from "Time"
-    assert g.moving_time_alt_s is None  # "--" in "Moving Time"
     assert g.elapsed_time_s == 3208
     assert g.calories == 631
     assert g.avg_hr == 156
