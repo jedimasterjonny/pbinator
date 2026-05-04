@@ -39,8 +39,9 @@ def _parse_int_or_none(value: str, field: str, line_no: int) -> int | None:
     raw = value.strip()
     if raw in {_BLANK, ""}:
         return None
+    # Garmin formats integers >= 1000 with a thousands separator (e.g. "1,280").
     try:
-        return int(raw)
+        return int(raw.replace(",", ""))
     except ValueError as exc:
         msg = f"unparsable {field}: {value!r}"
         raise GarminParseError(line_no, msg) from exc
