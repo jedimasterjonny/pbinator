@@ -36,6 +36,11 @@ def test_parse_int_or_none_returns_int() -> None:
     assert garmin._parse_int_or_none("156", "Avg HR", 5) == 156
 
 
+def test_parse_int_or_none_strips_thousands_separator() -> None:
+    assert garmin._parse_int_or_none("1,280", "Calories", 5) == 1280
+    assert garmin._parse_int_or_none("8,382", "Steps", 5) == 8382
+
+
 def test_parse_int_or_none_rejects_garbage() -> None:
     with pytest.raises(garmin.GarminParseError) as exc:
         garmin._parse_int_or_none("not-a-number", "Avg HR", 7)
