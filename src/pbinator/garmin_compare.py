@@ -177,7 +177,7 @@ FIELD_RULES: tuple[FieldRule, ...] = (
     FieldRule("title", _g_title, _s_name, numeric=False, tolerance=0),
     FieldRule("start_local", _g_start, _s_start, numeric=True, tolerance=2),
     FieldRule("distance_m", _g_distance, _s_distance, numeric=True, tolerance=10),
-    FieldRule("moving_time_s", _g_moving_time, _s_moving_time, numeric=True, tolerance=2),
+    FieldRule("moving_time_s", _g_moving_time, _s_moving_time, numeric=True, tolerance=10),
     FieldRule("elapsed_time_s", _g_elapsed, _s_elapsed, numeric=True, tolerance=2),
     FieldRule("calories", _g_calories, _s_calories, numeric=True, tolerance=1),
     FieldRule("avg_hr", _g_avg_hr, _s_avg_hr, numeric=True, tolerance=1),
