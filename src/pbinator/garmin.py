@@ -20,8 +20,6 @@ _REQUIRED_COLUMNS: tuple[str, ...] = (
     "Time",
     "Avg HR",
     "Max HR",
-    "Avg Run Cadence",
-    "Max Run Cadence",
     "Total Ascent",
     "Elapsed Time",
     "Min Elevation",
@@ -117,8 +115,6 @@ class GarminActivity:
     total_ascent_m: int | None
     min_elevation_m: int | None
     max_elevation_m: int | None
-    avg_run_cadence: int | None
-    max_run_cadence: int | None
 
 
 def _require_field(row: dict[str, str], field: str, line_no: int) -> str:
@@ -178,12 +174,6 @@ def parse_activities(text: str) -> list[GarminActivity]:
                 ),
                 max_elevation_m=_parse_int_or_none(
                     row.get("Max Elevation", ""), "Max Elevation", line_no
-                ),
-                avg_run_cadence=_parse_int_or_none(
-                    row.get("Avg Run Cadence", ""), "Avg Run Cadence", line_no
-                ),
-                max_run_cadence=_parse_int_or_none(
-                    row.get("Max Run Cadence", ""), "Max Run Cadence", line_no
                 ),
             )
         )

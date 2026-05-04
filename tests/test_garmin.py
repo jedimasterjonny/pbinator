@@ -126,8 +126,6 @@ def _row(  # noqa: PLR0913 — test helper builder
     time: str = "00:53:11",
     avg_hr: str = "156",
     max_hr: str = "168",
-    avg_run_cadence: str = "158",
-    max_run_cadence: str = "163",
     total_ascent: str = "55",
     elapsed_time: str = "00:53:28",
     min_elev: str = "72",
@@ -144,8 +142,8 @@ def _row(  # noqa: PLR0913 — test helper builder
         avg_hr,
         max_hr,
         "3.4",
-        avg_run_cadence,
-        max_run_cadence,
+        "158",
+        "163",
         "5:54",
         "5:15",
         total_ascent,
@@ -195,8 +193,6 @@ def test_parse_one_row_populates_dataclass() -> None:
     assert g.total_ascent_m == 55
     assert g.min_elevation_m == 72
     assert g.max_elevation_m == 92
-    assert g.avg_run_cadence == 158
-    assert g.max_run_cadence == 163
 
 
 def test_parse_blanks_become_none() -> None:
@@ -207,8 +203,6 @@ def test_parse_blanks_become_none() -> None:
             calories="--",
             avg_hr="--",
             max_hr="--",
-            avg_run_cadence="--",
-            max_run_cadence="--",
             total_ascent="--",
             min_elev="--",
             max_elev="--",
@@ -223,8 +217,6 @@ def test_parse_blanks_become_none() -> None:
     assert g.total_ascent_m is None
     assert g.min_elevation_m is None
     assert g.max_elevation_m is None
-    assert g.avg_run_cadence is None
-    assert g.max_run_cadence is None
     assert g.moving_time_s is None
 
 

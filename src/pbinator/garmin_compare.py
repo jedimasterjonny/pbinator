@@ -143,24 +143,6 @@ def _s_max_elev(_a: Activity, raw: dict[str, Any]) -> float | None:
     return raw.get("elev_high")
 
 
-def _g_avg_cadence(g: GarminActivity) -> int | None:
-    return g.avg_run_cadence
-
-
-def _s_avg_cadence(_a: Activity, raw: dict[str, Any]) -> float | None:
-    val = raw.get("average_cadence")
-    return None if val is None else val * 2
-
-
-def _g_max_cadence(g: GarminActivity) -> int | None:
-    return g.max_run_cadence
-
-
-def _s_max_cadence(_a: Activity, raw: dict[str, Any]) -> float | None:
-    val = raw.get("max_cadence")
-    return None if val is None else val * 2
-
-
 @dataclass(frozen=True)
 class FieldRule:
     """One field comparison rule."""
@@ -185,8 +167,6 @@ FIELD_RULES: tuple[FieldRule, ...] = (
     FieldRule("total_ascent_m", _g_ascent, _s_ascent, numeric=True, tolerance=1),
     FieldRule("min_elevation_m", _g_min_elev, _s_min_elev, numeric=True, tolerance=1),
     FieldRule("max_elevation_m", _g_max_elev, _s_max_elev, numeric=True, tolerance=1),
-    FieldRule("avg_cadence", _g_avg_cadence, _s_avg_cadence, numeric=True, tolerance=1),
-    FieldRule("max_cadence", _g_max_cadence, _s_max_cadence, numeric=True, tolerance=1),
 )
 
 

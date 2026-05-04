@@ -74,15 +74,15 @@ introduced). By default it reads `data/Activities.csv`; a file uploader
 on the tab lets you swap in a different CSV for the current session.
 Pairing is sport-agnostic within ±60 seconds on `start_date_local`; the
 sport difference itself becomes a flagged field rather than a missing
-pair. Fifteen fields are compared per pair — Activity Type, Title,
-distance, elapsed/moving time, calories, avg/max HR, total ascent,
-min/max elevation, and avg/max cadence (Strava's value is doubled to
-match Garmin's spm convention for runs) — with small per-field
-tolerances (10 m on distance, 2 s on times, 1 unit on
-HR/cadence/elevation, strict equality on Title and sport). Power
-fields (`avg_power`, `max_power`, `normalized_power`) are deliberately
-not compared: Garmin and Strava use different smoothing algorithms
-over the same raw stream, so they disagree by 2–20 W on every paired
+pair. Twelve fields are compared per pair — Activity Type, Title,
+start time, distance, moving and elapsed time, calories, avg/max HR,
+total ascent, and min/max elevation — with small per-field tolerances
+(10 m on distance, 10 s on moving time, 2 s on elapsed time and start
+drift, 1 unit on HR/elevation/calories, strict equality on Title and
+sport). Cadence fields and power fields (avg/max/normalized) are
+deliberately not compared: Garmin and Strava use different smoothing
+and moving-time-boundary algorithms over the same raw stream, so they
+disagree by 2–20 W (power) and 0–11 spm (cadence) on every paired
 activity — systematic algorithmic divergence, not sync drift. Three
 sections render the result:
 
@@ -97,9 +97,8 @@ sections render the result:
   another device that bypassed Garmin).
 
 The required Garmin columns are Activity Type, Date, Title, Distance,
-Calories, Time, Avg HR, Max HR, Avg Run Cadence, Max Run Cadence,
-Total Ascent, Moving Time, Elapsed Time, Min Elevation, and Max
-Elevation; cells rendered as
+Calories, Time, Avg HR, Max HR, Total Ascent, Elapsed Time, Min
+Elevation, and Max Elevation; cells rendered as
 `--` parse to "absent" and the corresponding field is skipped for that
 pair (absent ≠ mismatched).
 
