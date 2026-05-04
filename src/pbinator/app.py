@@ -390,7 +390,7 @@ def _render_garmin_tab(session: Session, athlete_id: int, settings: Settings) ->
 
 
 _TIME_LIKE_FIELDS = frozenset(
-    {"start_local", "moving_time_s", "moving_time_alt_s", "elapsed_time_s"},
+    {"start_local", "moving_time_s", "elapsed_time_s"},
 )
 
 
