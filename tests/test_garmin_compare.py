@@ -203,6 +203,22 @@ def test_compare_clean_pair_emits_nothing() -> None:
     assert result.strava_only == []
 
 
+def test_compare_handles_strava_local_with_trailing_z() -> None:
+    """Strava serialises start_date_local with a misleading trailing Z.
+
+    The string represents naive local time; the Z is a Strava API artifact.
+    The comparator must strip it before parsing so subtraction against the
+    Garmin naive datetime doesn't raise on aware/naive mixing.
+    """
+    g = _g()
+    s = _strava(start_date_local="2026-05-02T13:18:06Z")
+    result = garmin_compare.compare(garmin=[g], strava=[s])
+    # Same instant once Z is stripped, so the pair is clean.
+    assert result.mismatches == []
+    assert result.garmin_only == []
+    assert result.strava_only == []
+
+
 def test_compare_title_strict_mismatch_emits_one() -> None:
     g = _g(title="Easy Run")
     s = _strava(name="Easy Run ")  # trailing space
