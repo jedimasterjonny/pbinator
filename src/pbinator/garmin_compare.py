@@ -30,6 +30,21 @@ SPORT_MAP: dict[str, str] = {
 PAIRING_WINDOW_S = 60
 
 
+def _parse_strava_local(value: str) -> datetime:
+    """Parse Strava's ``start_date_local`` as a naive datetime.
+
+    Strava's API serialises ``start_date_local`` as an ISO-8601 string with
+    a trailing ``Z`` even though it represents the activity's local time
+    (the timezone offset has already been applied). Stripping the ``Z``
+    keeps the value naive so it can be compared against Garmin's naive
+    ``start_local`` without raising on aware/naive subtraction.
+
+    Returns:
+        A naive ``datetime`` in the activity's local time.
+    """
+    return datetime.fromisoformat(value.removesuffix("Z"))
+
+
 def _g_sport(g: GarminActivity) -> str | None:
     return SPORT_MAP.get(g.activity_type)
 
@@ -53,7 +68,7 @@ def _g_start(g: GarminActivity) -> float:
 def _s_start(a: Activity, _raw: dict[str, Any]) -> float | None:
     if a.start_date_local is None:
         return None
-    return datetime.fromisoformat(a.start_date_local).timestamp()
+    return _parse_strava_local(a.start_date_local).timestamp()
 
 
 def _g_distance(g: GarminActivity) -> float:
@@ -304,7 +319,7 @@ def compare(
     for a in strava:
         if a.start_date_local is None:
             continue
-        local = datetime.fromisoformat(a.start_date_local)
+        local = _parse_strava_local(a.start_date_local)
         raw = json.loads(a.raw_json)
         parsed.append((a, local, raw))
 
