@@ -23,8 +23,6 @@ def _g(  # noqa: PLR0913 — test helper builder
     total_ascent_m: int | None = 55,
     min_elevation_m: int | None = 72,
     max_elevation_m: int | None = 92,
-    avg_run_cadence: int | None = 158,
-    max_run_cadence: int | None = 163,
 ) -> GarminActivity:
     return GarminActivity(
         activity_type=activity_type,
@@ -39,8 +37,6 @@ def _g(  # noqa: PLR0913 — test helper builder
         total_ascent_m=total_ascent_m,
         min_elevation_m=min_elevation_m,
         max_elevation_m=max_elevation_m,
-        avg_run_cadence=avg_run_cadence,
-        max_run_cadence=max_run_cadence,
     )
 
 
@@ -70,14 +66,12 @@ def test_pairing_window_constant() -> None:
     assert garmin_compare.PAIRING_WINDOW_S == 60
 
 
-def _strava_raw(  # noqa: PLR0913 — test helper builder
+def _strava_raw(
     *,
     average_heartrate: float | None = 156,
     max_heartrate: float | None = 168,
     elev_low: float | None = 72,
     elev_high: float | None = 92,
-    average_cadence: float | None = 79,  # Strava reports half-spm for runs
-    max_cadence: float | None = 81.5,
     calories: float | None = 631,
 ) -> dict[str, Any]:
     candidates: dict[str, float | None] = {
@@ -85,14 +79,12 @@ def _strava_raw(  # noqa: PLR0913 — test helper builder
         "max_heartrate": max_heartrate,
         "elev_low": elev_low,
         "elev_high": elev_high,
-        "average_cadence": average_cadence,
-        "max_cadence": max_cadence,
         "calories": calories,
     }
     return {k: v for k, v in candidates.items() if v is not None}
 
 
-def test_field_rules_include_all_14_entries() -> None:
+def test_field_rules_include_all_12_entries() -> None:
     names = [r.name for r in garmin_compare.FIELD_RULES]
     assert names == [
         "sport_type",
@@ -107,31 +99,7 @@ def test_field_rules_include_all_14_entries() -> None:
         "total_ascent_m",
         "min_elevation_m",
         "max_elevation_m",
-        "avg_cadence",
-        "max_cadence",
     ]
-
-
-def test_field_rules_strava_cadence_doubled() -> None:
-    """Strava reports run cadence as half-spm; the rule's strava_get doubles it."""
-    rule = next(r for r in garmin_compare.FIELD_RULES if r.name == "avg_cadence")
-    fake_activity = _strava()
-    raw = {"average_cadence": 79.0}
-    assert rule.strava_get(fake_activity, raw) == 158
-
-
-def test_field_rules_strava_max_cadence_doubled() -> None:
-    """Same doubling applied to max cadence."""
-    rule = next(r for r in garmin_compare.FIELD_RULES if r.name == "max_cadence")
-    fake_activity = _strava()
-    raw = {"max_cadence": 81.5}
-    assert rule.strava_get(fake_activity, raw) == pytest.approx(163.0)
-
-
-def test_field_rules_strava_max_cadence_none_when_absent() -> None:
-    rule = next(r for r in garmin_compare.FIELD_RULES if r.name == "max_cadence")
-    fake_activity = _strava()
-    assert rule.strava_get(fake_activity, {}) is None
 
 
 def test_field_rules_strava_getter_returns_none_when_absent() -> None:
@@ -259,21 +227,6 @@ def test_compare_skips_field_when_strava_raw_field_absent() -> None:
     s = _strava(raw=_strava_raw(average_heartrate=None))
     result = garmin_compare.compare(garmin=[g], strava=[s])
     assert all(m.field != "avg_hr" for m in result.mismatches)
-
-
-def test_compare_cadence_doubled_strava_clean() -> None:
-    g = _g(avg_run_cadence=158)
-    s = _strava(raw=_strava_raw(average_cadence=79))  # 79 * 2 = 158
-    result = garmin_compare.compare(garmin=[g], strava=[s])
-    assert all(m.field != "avg_cadence" for m in result.mismatches)
-
-
-def test_compare_cadence_doubled_strava_flags() -> None:
-    g = _g(avg_run_cadence=158)
-    s = _strava(raw=_strava_raw(average_cadence=80))  # 80 * 2 = 160, delta = 2 > 1
-    result = garmin_compare.compare(garmin=[g], strava=[s])
-    cad = [m for m in result.mismatches if m.field == "avg_cadence"]
-    assert len(cad) == 1
 
 
 def test_compare_sport_mapping_running_run_clean() -> None:
