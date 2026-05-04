@@ -60,7 +60,11 @@ def _parse_hms_to_s(value: str, field: str, line_no: int) -> int | None:
         msg = f"unparsable {field}: {value!r}"
         raise GarminParseError(line_no, msg)
     try:
-        hours, minutes, seconds = (int(p) for p in parts)
+        hours = int(parts[0])
+        minutes = int(parts[1])
+        # Seconds may carry a fractional component (e.g. "25.4"); round to the
+        # nearest whole second since the rest of the pipeline is integer-seconds.
+        seconds = round(float(parts[2]))
     except ValueError as exc:
         msg = f"unparsable {field}: {value!r}"
         raise GarminParseError(line_no, msg) from exc
