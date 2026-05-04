@@ -24,6 +24,7 @@ coverage.xml
 htmlcov/
 
 # Local data
+data
 data/
 
 # Brainstorming companion artefacts
