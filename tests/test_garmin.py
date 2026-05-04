@@ -129,9 +129,6 @@ def _row(  # noqa: PLR0913 — test helper builder
     avg_run_cadence: str = "158",
     max_run_cadence: str = "163",
     total_ascent: str = "55",
-    avg_power: str = "298",
-    max_power: str = "388",
-    np: str = "296",
     moving_time: str = "--",
     elapsed_time: str = "00:53:28",
     min_elev: str = "72",
@@ -159,10 +156,10 @@ def _row(  # noqa: PLR0913 — test helper builder
         "9.7",
         "293",
         "5:54",
-        np,
+        "296",
         "0.0",
-        avg_power,
-        max_power,
+        "298",
+        "388",
         "--",
         "--",
         "--",
@@ -202,9 +199,6 @@ def test_parse_one_row_populates_dataclass() -> None:
     assert g.max_elevation_m == 92
     assert g.avg_run_cadence == 158
     assert g.max_run_cadence == 163
-    assert g.avg_power == 298
-    assert g.max_power == 388
-    assert g.normalized_power == 296
 
 
 def test_parse_blanks_become_none() -> None:
@@ -218,9 +212,6 @@ def test_parse_blanks_become_none() -> None:
             avg_run_cadence="--",
             max_run_cadence="--",
             total_ascent="--",
-            avg_power="--",
-            max_power="--",
-            np="--",
             min_elev="--",
             max_elev="--",
             time="--",
@@ -236,9 +227,6 @@ def test_parse_blanks_become_none() -> None:
     assert g.max_elevation_m is None
     assert g.avg_run_cadence is None
     assert g.max_run_cadence is None
-    assert g.avg_power is None
-    assert g.max_power is None
-    assert g.normalized_power is None
     assert g.moving_time_s is None
 
 

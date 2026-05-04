@@ -74,12 +74,16 @@ introduced). By default it reads `data/Activities.csv`; a file uploader
 on the tab lets you swap in a different CSV for the current session.
 Pairing is sport-agnostic within ±60 seconds on `start_date_local`; the
 sport difference itself becomes a flagged field rather than a missing
-pair. Up to 18 fields are compared per pair — Activity Type, Title,
+pair. Fifteen fields are compared per pair — Activity Type, Title,
 distance, elapsed/moving time, calories, avg/max HR, total ascent,
-min/max elevation, avg/max cadence (Strava's value is doubled to match
-Garmin's spm convention for runs), and avg/max/normalized power — with
-small per-field tolerances (10 m on distance, 2 s on times, 1 unit on
-HR/cadence/power/elevation, strict equality on Title and sport). Three
+min/max elevation, and avg/max cadence (Strava's value is doubled to
+match Garmin's spm convention for runs) — with small per-field
+tolerances (10 m on distance, 2 s on times, 1 unit on
+HR/cadence/elevation, strict equality on Title and sport). Power
+fields (`avg_power`, `max_power`, `normalized_power`) are deliberately
+not compared: Garmin and Strava use different smoothing algorithms
+over the same raw stream, so they disagree by 2–20 W on every paired
+activity — systematic algorithmic divergence, not sync drift. Three
 sections render the result:
 
 - **Field mismatches** — one row per disagreeing field on a paired
@@ -94,8 +98,8 @@ sections render the result:
 
 The required Garmin columns are Activity Type, Date, Title, Distance,
 Calories, Time, Avg HR, Max HR, Avg Run Cadence, Max Run Cadence,
-Total Ascent, Avg Power, Max Power, `Normalized Power® (NP®)`, Moving
-Time, Elapsed Time, Min Elevation, and Max Elevation; cells rendered as
+Total Ascent, Moving Time, Elapsed Time, Min Elevation, and Max
+Elevation; cells rendered as
 `--` parse to "absent" and the corresponding field is skipped for that
 pair (absent ≠ mismatched).
 
