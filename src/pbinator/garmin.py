@@ -23,9 +23,6 @@ _REQUIRED_COLUMNS: tuple[str, ...] = (
     "Avg Run Cadence",
     "Max Run Cadence",
     "Total Ascent",
-    "Avg Power",
-    "Max Power",
-    "Normalized Power® (NP®)",
     "Moving Time",
     "Elapsed Time",
     "Min Elevation",
@@ -124,9 +121,6 @@ class GarminActivity:
     max_elevation_m: int | None
     avg_run_cadence: int | None
     max_run_cadence: int | None
-    avg_power: int | None
-    max_power: int | None
-    normalized_power: int | None
 
 
 def _require_field(row: dict[str, str], field: str, line_no: int) -> str:
@@ -195,13 +189,6 @@ def parse_activities(text: str) -> list[GarminActivity]:
                 ),
                 max_run_cadence=_parse_int_or_none(
                     row.get("Max Run Cadence", ""), "Max Run Cadence", line_no
-                ),
-                avg_power=_parse_int_or_none(row.get("Avg Power", ""), "Avg Power", line_no),
-                max_power=_parse_int_or_none(row.get("Max Power", ""), "Max Power", line_no),
-                normalized_power=_parse_int_or_none(
-                    row.get("Normalized Power® (NP®)", ""),
-                    "Normalized Power",
-                    line_no,
                 ),
             )
         )

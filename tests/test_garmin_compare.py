@@ -26,9 +26,6 @@ def _g(  # noqa: PLR0913 — test helper builder
     max_elevation_m: int | None = 92,
     avg_run_cadence: int | None = 158,
     max_run_cadence: int | None = 163,
-    avg_power: int | None = 298,
-    max_power: int | None = 388,
-    normalized_power: int | None = 296,
 ) -> GarminActivity:
     return GarminActivity(
         activity_type=activity_type,
@@ -46,9 +43,6 @@ def _g(  # noqa: PLR0913 — test helper builder
         max_elevation_m=max_elevation_m,
         avg_run_cadence=avg_run_cadence,
         max_run_cadence=max_run_cadence,
-        avg_power=avg_power,
-        max_power=max_power,
-        normalized_power=normalized_power,
     )
 
 
@@ -86,9 +80,6 @@ def _strava_raw(  # noqa: PLR0913 — test helper builder
     elev_high: float | None = 92,
     average_cadence: float | None = 79,  # Strava reports half-spm for runs
     max_cadence: float | None = 81.5,
-    average_watts: float | None = 298,
-    max_watts: float | None = 388,
-    weighted_average_watts: float | None = 296,
     calories: float | None = 631,
 ) -> dict[str, Any]:
     candidates: dict[str, float | None] = {
@@ -98,15 +89,12 @@ def _strava_raw(  # noqa: PLR0913 — test helper builder
         "elev_high": elev_high,
         "average_cadence": average_cadence,
         "max_cadence": max_cadence,
-        "average_watts": average_watts,
-        "max_watts": max_watts,
-        "weighted_average_watts": weighted_average_watts,
         "calories": calories,
     }
     return {k: v for k, v in candidates.items() if v is not None}
 
 
-def test_field_rules_include_all_18_entries() -> None:
+def test_field_rules_include_all_15_entries() -> None:
     names = [r.name for r in garmin_compare.FIELD_RULES]
     assert names == [
         "sport_type",
@@ -124,9 +112,6 @@ def test_field_rules_include_all_18_entries() -> None:
         "max_elevation_m",
         "avg_cadence",
         "max_cadence",
-        "avg_power",
-        "max_power",
-        "normalized_power",
     ]
 
 

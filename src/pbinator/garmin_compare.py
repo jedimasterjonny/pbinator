@@ -165,30 +165,6 @@ def _s_max_cadence(_a: Activity, raw: dict[str, Any]) -> float | None:
     return None if val is None else val * 2
 
 
-def _g_avg_power(g: GarminActivity) -> int | None:
-    return g.avg_power
-
-
-def _s_avg_power(_a: Activity, raw: dict[str, Any]) -> float | None:
-    return raw.get("average_watts")
-
-
-def _g_max_power(g: GarminActivity) -> int | None:
-    return g.max_power
-
-
-def _s_max_power(_a: Activity, raw: dict[str, Any]) -> float | None:
-    return raw.get("max_watts")
-
-
-def _g_np(g: GarminActivity) -> int | None:
-    return g.normalized_power
-
-
-def _s_np(_a: Activity, raw: dict[str, Any]) -> float | None:
-    return raw.get("weighted_average_watts")
-
-
 @dataclass(frozen=True)
 class FieldRule:
     """One field comparison rule."""
@@ -216,9 +192,6 @@ FIELD_RULES: tuple[FieldRule, ...] = (
     FieldRule("max_elevation_m", _g_max_elev, _s_max_elev, numeric=True, tolerance=1),
     FieldRule("avg_cadence", _g_avg_cadence, _s_avg_cadence, numeric=True, tolerance=1),
     FieldRule("max_cadence", _g_max_cadence, _s_max_cadence, numeric=True, tolerance=1),
-    FieldRule("avg_power", _g_avg_power, _s_avg_power, numeric=True, tolerance=1),
-    FieldRule("max_power", _g_max_power, _s_max_power, numeric=True, tolerance=1),
-    FieldRule("normalized_power", _g_np, _s_np, numeric=True, tolerance=1),
 )
 
 
