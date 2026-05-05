@@ -108,6 +108,10 @@ def _s_distance(a: Activity, _raw: dict[str, Any]) -> float:
 
 
 def _g_moving_time(g: GarminActivity) -> int | None:
+    # Garmin's "Time" for Pool Swim counts wall-rest seconds while Strava's
+    # moving_time_s excludes them — semantically different fields, not drift.
+    if g.activity_type == "Pool Swim":
+        return None
     return g.moving_time_s
 
 
