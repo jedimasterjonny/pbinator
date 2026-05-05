@@ -130,7 +130,6 @@ def _row(  # noqa: PLR0913 — test helper builder
     calories: str = "631",
     time: str = "00:53:11",
     avg_hr: str = "156",
-    max_hr: str = "168",
     elapsed_time: str = "00:53:28",
 ) -> str:
     cols = [
@@ -142,7 +141,7 @@ def _row(  # noqa: PLR0913 — test helper builder
         calories,
         time,
         avg_hr,
-        max_hr,
+        "168",
         "3.4",
         "158",
         "163",
@@ -191,7 +190,6 @@ def test_parse_one_row_populates_dataclass() -> None:
     assert g.elapsed_time_s == 3208
     assert g.calories == 631
     assert g.avg_hr == 156
-    assert g.max_hr == 168
 
 
 def test_parse_blanks_become_none() -> None:
@@ -201,7 +199,6 @@ def test_parse_blanks_become_none() -> None:
         + _row(
             calories="--",
             avg_hr="--",
-            max_hr="--",
             time="--",
         )
         + "\n"
@@ -209,7 +206,6 @@ def test_parse_blanks_become_none() -> None:
     g = garmin.parse_activities(text)[0]
     assert g.calories is None
     assert g.avg_hr is None
-    assert g.max_hr is None
     assert g.moving_time_s is None
 
 

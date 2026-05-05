@@ -19,7 +19,6 @@ def _g(  # noqa: PLR0913 — test helper builder
     moving_time_s: int | None = 3191,
     calories: int | None = 631,
     avg_hr: int | None = 156,
-    max_hr: int | None = 168,
 ) -> GarminActivity:
     return GarminActivity(
         activity_type=activity_type,
@@ -30,7 +29,6 @@ def _g(  # noqa: PLR0913 — test helper builder
         elapsed_time_s=elapsed_time_s,
         calories=calories,
         avg_hr=avg_hr,
-        max_hr=max_hr,
     )
 
 
@@ -63,18 +61,16 @@ def test_pairing_window_constant() -> None:
 def _strava_raw(
     *,
     average_heartrate: float | None = 156,
-    max_heartrate: float | None = 168,
     calories: float | None = 631,
 ) -> dict[str, Any]:
     candidates: dict[str, float | None] = {
         "average_heartrate": average_heartrate,
-        "max_heartrate": max_heartrate,
         "calories": calories,
     }
     return {k: v for k, v in candidates.items() if v is not None}
 
 
-def test_field_rules_include_all_9_entries() -> None:
+def test_field_rules_include_all_8_entries() -> None:
     names = [r.name for r in garmin_compare.FIELD_RULES]
     assert names == [
         "sport_type",
@@ -85,8 +81,17 @@ def test_field_rules_include_all_9_entries() -> None:
         "elapsed_time_s",
         "calories",
         "avg_hr",
-        "max_hr",
     ]
+
+
+def test_field_rules_strava_avg_hr_rounds_to_int() -> None:
+    """Strava reports average_heartrate as float; getter must round so the
+    rule doesn't flag a same-valued pair on rounding drift alone."""
+    rule = next(r for r in garmin_compare.FIELD_RULES if r.name == "avg_hr")
+    fake_activity = _strava()
+    assert rule.strava_get(fake_activity, {"average_heartrate": 155.4}) == 155
+    assert rule.strava_get(fake_activity, {"average_heartrate": 155.6}) == 156
+    assert rule.strava_get(fake_activity, {}) is None
 
 
 def test_field_rules_strava_getter_returns_none_when_absent() -> None:
