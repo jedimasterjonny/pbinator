@@ -151,30 +151,6 @@ def _s_max_hr(_a: Activity, raw: dict[str, Any]) -> float | None:
     return raw.get("max_heartrate")
 
 
-def _g_ascent(g: GarminActivity) -> int | None:
-    return g.total_ascent_m
-
-
-def _s_ascent(a: Activity, _raw: dict[str, Any]) -> float:
-    return a.total_elev_gain_m
-
-
-def _g_min_elev(g: GarminActivity) -> int | None:
-    return g.min_elevation_m
-
-
-def _s_min_elev(_a: Activity, raw: dict[str, Any]) -> float | None:
-    return raw.get("elev_low")
-
-
-def _g_max_elev(g: GarminActivity) -> int | None:
-    return g.max_elevation_m
-
-
-def _s_max_elev(_a: Activity, raw: dict[str, Any]) -> float | None:
-    return raw.get("elev_high")
-
-
 @dataclass(frozen=True)
 class FieldRule:
     """One field comparison rule."""
@@ -196,9 +172,6 @@ FIELD_RULES: tuple[FieldRule, ...] = (
     FieldRule("calories", _g_calories, _s_calories, numeric=True, tolerance=1),
     FieldRule("avg_hr", _g_avg_hr, _s_avg_hr, numeric=True, tolerance=1),
     FieldRule("max_hr", _g_max_hr, _s_max_hr, numeric=True, tolerance=1),
-    FieldRule("total_ascent_m", _g_ascent, _s_ascent, numeric=True, tolerance=1),
-    FieldRule("min_elevation_m", _g_min_elev, _s_min_elev, numeric=True, tolerance=1),
-    FieldRule("max_elevation_m", _g_max_elev, _s_max_elev, numeric=True, tolerance=1),
 )
 
 
