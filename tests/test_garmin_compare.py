@@ -20,9 +20,6 @@ def _g(  # noqa: PLR0913 — test helper builder
     calories: int | None = 631,
     avg_hr: int | None = 156,
     max_hr: int | None = 168,
-    total_ascent_m: int | None = 55,
-    min_elevation_m: int | None = 72,
-    max_elevation_m: int | None = 92,
 ) -> GarminActivity:
     return GarminActivity(
         activity_type=activity_type,
@@ -34,9 +31,6 @@ def _g(  # noqa: PLR0913 — test helper builder
         calories=calories,
         avg_hr=avg_hr,
         max_hr=max_hr,
-        total_ascent_m=total_ascent_m,
-        min_elevation_m=min_elevation_m,
-        max_elevation_m=max_elevation_m,
     )
 
 
@@ -70,21 +64,17 @@ def _strava_raw(
     *,
     average_heartrate: float | None = 156,
     max_heartrate: float | None = 168,
-    elev_low: float | None = 72,
-    elev_high: float | None = 92,
     calories: float | None = 631,
 ) -> dict[str, Any]:
     candidates: dict[str, float | None] = {
         "average_heartrate": average_heartrate,
         "max_heartrate": max_heartrate,
-        "elev_low": elev_low,
-        "elev_high": elev_high,
         "calories": calories,
     }
     return {k: v for k, v in candidates.items() if v is not None}
 
 
-def test_field_rules_include_all_12_entries() -> None:
+def test_field_rules_include_all_9_entries() -> None:
     names = [r.name for r in garmin_compare.FIELD_RULES]
     assert names == [
         "sport_type",
@@ -96,9 +86,6 @@ def test_field_rules_include_all_12_entries() -> None:
         "calories",
         "avg_hr",
         "max_hr",
-        "total_ascent_m",
-        "min_elevation_m",
-        "max_elevation_m",
     ]
 
 

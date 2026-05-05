@@ -131,10 +131,7 @@ def _row(  # noqa: PLR0913 — test helper builder
     time: str = "00:53:11",
     avg_hr: str = "156",
     max_hr: str = "168",
-    total_ascent: str = "55",
     elapsed_time: str = "00:53:28",
-    min_elev: str = "72",
-    max_elev: str = "92",
 ) -> str:
     cols = [
         activity_type,
@@ -151,7 +148,7 @@ def _row(  # noqa: PLR0913 — test helper builder
         "163",
         "5:54",
         "5:15",
-        total_ascent,
+        "55",
         "53",
         "1.07",
         "9.0",
@@ -174,8 +171,8 @@ def _row(  # noqa: PLR0913 — test helper builder
         "--",
         "--",
         elapsed_time,
-        min_elev,
-        max_elev,
+        "72",
+        "92",
     ]
     return ",".join(f'"{c}"' if "," in c else c for c in cols)
 
@@ -195,9 +192,6 @@ def test_parse_one_row_populates_dataclass() -> None:
     assert g.calories == 631
     assert g.avg_hr == 156
     assert g.max_hr == 168
-    assert g.total_ascent_m == 55
-    assert g.min_elevation_m == 72
-    assert g.max_elevation_m == 92
 
 
 def test_parse_blanks_become_none() -> None:
@@ -208,9 +202,6 @@ def test_parse_blanks_become_none() -> None:
             calories="--",
             avg_hr="--",
             max_hr="--",
-            total_ascent="--",
-            min_elev="--",
-            max_elev="--",
             time="--",
         )
         + "\n"
@@ -219,9 +210,6 @@ def test_parse_blanks_become_none() -> None:
     assert g.calories is None
     assert g.avg_hr is None
     assert g.max_hr is None
-    assert g.total_ascent_m is None
-    assert g.min_elevation_m is None
-    assert g.max_elevation_m is None
     assert g.moving_time_s is None
 
 
