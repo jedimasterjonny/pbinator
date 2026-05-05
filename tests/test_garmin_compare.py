@@ -202,6 +202,23 @@ def test_compare_strava_random_prefix_is_not_treated_as_default() -> None:
     assert len(title_mismatches) == 1
 
 
+def test_compare_pool_swim_skips_moving_time_rule() -> None:
+    """Garmin's Pool Swim "Time" includes wall rest; Strava's moving_time_s does not."""
+    g = _g(activity_type="Pool Swim", title="Stroke Refinement - 600m", moving_time_s=1423)
+    s = _strava(sport_type="Swim", name="Stroke Refinement - 600m", moving_time_s=820)
+    result = garmin_compare.compare(garmin=[g], strava=[s])
+    assert all(m.field != "moving_time_s" for m in result.mismatches)
+
+
+def test_compare_running_still_compares_moving_time() -> None:
+    """Sanity: the Pool-Swim skip doesn't suppress moving_time on other sports."""
+    g = _g(activity_type="Running", moving_time_s=3000)
+    s = _strava(sport_type="Run", moving_time_s=2950)  # |Δ| = 50 > tolerance 10
+    result = garmin_compare.compare(garmin=[g], strava=[s])
+    moving = [m for m in result.mismatches if m.field == "moving_time_s"]
+    assert len(moving) == 1
+
+
 def test_compare_handles_strava_local_with_trailing_z() -> None:
     """Strava serialises start_date_local with a misleading trailing Z.
 

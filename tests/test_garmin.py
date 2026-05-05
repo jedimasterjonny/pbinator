@@ -82,13 +82,18 @@ def test_parse_hms_to_s_rejects_non_integer_parts() -> None:
     assert "Time" in exc.value.reason
 
 
-def test_parse_distance_km_to_m_converts_with_precision() -> None:
-    assert garmin._parse_distance_km_to_m("9.01", 4) == pytest.approx(9010.0)
+def test_parse_distance_to_m_converts_km_for_running() -> None:
+    assert garmin._parse_distance_to_m("9.01", "Running", 4) == pytest.approx(9010.0)
 
 
-def test_parse_distance_km_to_m_rejects_garbage() -> None:
+def test_parse_distance_to_m_keeps_metres_for_pool_swim() -> None:
+    """Garmin reports pool-swim Distance in metres, not kilometres."""
+    assert garmin._parse_distance_to_m("600", "Pool Swim", 4) == pytest.approx(600.0)
+
+
+def test_parse_distance_to_m_rejects_garbage() -> None:
     with pytest.raises(garmin.GarminParseError) as exc:
-        garmin._parse_distance_km_to_m("not-a-number", 4)
+        garmin._parse_distance_to_m("not-a-number", "Running", 4)
     assert "Distance" in exc.value.reason
 
 

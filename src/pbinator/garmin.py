@@ -65,10 +65,23 @@ def _parse_hms_to_s(value: str, field: str, line_no: int) -> int | None:
     return hours * 3600 + minutes * 60 + seconds
 
 
-def _parse_distance_km_to_m(value: str, line_no: int) -> float:
+def _parse_distance_to_m(value: str, activity_type: str, line_no: int) -> float:
+    """Parse Garmin's ``Distance`` cell as metres.
+
+    Garmin's CSV mixes units in the same column: pool swims are reported in
+    metres (e.g. ``"600"``), every other activity in kilometres (e.g.
+    ``"9.01"``). Branch on ``activity_type`` to apply the right scale.
+
+    Returns:
+        Distance in metres rounded to 0.1 m precision.
+
+    Raises:
+        GarminParseError: if ``value`` is not a parsable float.
+    """
     raw = value.strip()
+    multiplier = 1.0 if activity_type == "Pool Swim" else 1000.0
     try:
-        return round(float(raw) * 1000, 1)
+        return round(float(raw) * multiplier, 1)
     except ValueError as exc:
         msg = f"unparsable Distance: {value!r}"
         raise GarminParseError(line_no, msg) from exc
@@ -148,7 +161,9 @@ def parse_activities(text: str) -> list[GarminActivity]:
         activity_type = _require_field(row, "Activity Type", line_no)
         title = _require_field(row, "Title", line_no)
         start_local = _parse_date(_require_field(row, "Date", line_no), line_no)
-        distance_m = _parse_distance_km_to_m(_require_field(row, "Distance", line_no), line_no)
+        distance_m = _parse_distance_to_m(
+            _require_field(row, "Distance", line_no), activity_type, line_no
+        )
         elapsed_raw = _require_field(row, "Elapsed Time", line_no)
         elapsed_time_s = _parse_hms_to_s(elapsed_raw, "Elapsed Time", line_no)
         if elapsed_time_s is None:
