@@ -194,6 +194,34 @@ def test_compare_strava_random_prefix_is_not_treated_as_default() -> None:
     assert len(title_mismatches) == 1
 
 
+def test_compare_elapsed_time_default_tolerance_is_5s() -> None:
+    """Outside September, |Δ elapsed| <= 5 doesn't flag, > 5 does."""
+    g_in = _g(start_local=datetime(2026, 8, 1, 12, 0, 0), elapsed_time_s=3000)  # noqa: DTZ001 — naive by design
+    s_in = _strava(elapsed_time_s=2995, start_date_local="2026-08-01T12:00:00")
+    result_in = garmin_compare.compare(garmin=[g_in], strava=[s_in])
+    assert all(m.field != "elapsed_time_s" for m in result_in.mismatches)
+
+    g_out = _g(start_local=datetime(2026, 8, 1, 12, 0, 0), elapsed_time_s=3006)  # noqa: DTZ001 — naive by design
+    s_out = _strava(elapsed_time_s=3000, start_date_local="2026-08-01T12:00:00")
+    result_out = garmin_compare.compare(garmin=[g_out], strava=[s_out])
+    elapsed = [m for m in result_out.mismatches if m.field == "elapsed_time_s"]
+    assert len(elapsed) == 1
+
+
+def test_compare_elapsed_time_september_tolerance_is_25s() -> None:
+    """In September the rule absorbs the known platform-side trim drift."""
+    g_in = _g(start_local=datetime(2025, 9, 15, 8, 0, 0), elapsed_time_s=3020)  # noqa: DTZ001 — naive by design
+    s_in = _strava(elapsed_time_s=3000, start_date_local="2025-09-15T08:00:00")
+    result_in = garmin_compare.compare(garmin=[g_in], strava=[s_in])
+    assert all(m.field != "elapsed_time_s" for m in result_in.mismatches)
+
+    g_out = _g(start_local=datetime(2025, 9, 15, 8, 0, 0), elapsed_time_s=3030)  # noqa: DTZ001 — naive by design
+    s_out = _strava(elapsed_time_s=3000, start_date_local="2025-09-15T08:00:00")
+    result_out = garmin_compare.compare(garmin=[g_out], strava=[s_out])
+    elapsed = [m for m in result_out.mismatches if m.field == "elapsed_time_s"]
+    assert len(elapsed) == 1
+
+
 def test_compare_pool_swim_skips_moving_time_rule() -> None:
     """Garmin's Pool Swim "Time" includes wall rest; Strava's moving_time_s does not."""
     g = _g(activity_type="Pool Swim", title="Stroke Refinement - 600m", moving_time_s=1423)
