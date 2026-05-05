@@ -139,16 +139,12 @@ def _g_avg_hr(g: GarminActivity) -> int | None:
     return g.avg_hr
 
 
-def _s_avg_hr(_a: Activity, raw: dict[str, Any]) -> float | None:
-    return raw.get("average_heartrate")
-
-
-def _g_max_hr(g: GarminActivity) -> int | None:
-    return g.max_hr
-
-
-def _s_max_hr(_a: Activity, raw: dict[str, Any]) -> float | None:
-    return raw.get("max_heartrate")
+def _s_avg_hr(_a: Activity, raw: dict[str, Any]) -> int | None:
+    # Strava reports average_heartrate as a float (e.g. 155.4) while Garmin
+    # rounds to int. Round to int here so a same-valued pair doesn't flag on
+    # rounding drift alone.
+    val = raw.get("average_heartrate")
+    return None if val is None else round(val)
 
 
 @dataclass(frozen=True)
@@ -171,7 +167,6 @@ FIELD_RULES: tuple[FieldRule, ...] = (
     FieldRule("elapsed_time_s", _g_elapsed, _s_elapsed, numeric=True, tolerance=2),
     FieldRule("calories", _g_calories, _s_calories, numeric=True, tolerance=1),
     FieldRule("avg_hr", _g_avg_hr, _s_avg_hr, numeric=True, tolerance=1),
-    FieldRule("max_hr", _g_max_hr, _s_max_hr, numeric=True, tolerance=1),
 )
 
 
