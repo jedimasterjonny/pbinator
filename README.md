@@ -89,7 +89,10 @@ sections render the result:
 - **Field mismatches** — one row per disagreeing field on a paired
   activity, with a Field selectbox to filter (e.g. show only `title`
   drift), the Garmin value, the Strava value, the signed delta, and a
-  clickable Strava link.
+  clickable Strava link. Pairs that carry default-generated names on
+  both sides (Strava `Morning` / `Lunch` / `Afternoon` / `Evening` /
+  `Night Run` AND Garmin `<location> Running`) are skipped entirely —
+  their disagreements are noise, not drift.
 - **Garmin-only** — Garmin rows with no Strava counterpart in the ±60 s
   pairing window (a missed sync from Garmin to Strava).
 - **Strava-only** — Strava activities inside the Garmin export's date

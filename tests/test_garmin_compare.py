@@ -153,6 +153,55 @@ def test_compare_clean_pair_emits_nothing() -> None:
     assert result.strava_only == []
 
 
+def test_compare_skips_default_named_pair_entirely() -> None:
+    """When BOTH sides carry an auto-generated name, skip every field rule."""
+    # Distance disagreement that would normally flag — but the pair is auto-named
+    # on both sides, so no field mismatches should be emitted.
+    g = _g(title="Bournemouth Running", distance_m=9011.0)
+    s = _strava(name="Morning Run", distance_m=9000.0)
+    result = garmin_compare.compare(garmin=[g], strava=[s])
+    assert result.mismatches == []
+    # The pair still consumed paired_ids, so the Strava activity isn't Strava-only.
+    assert result.strava_only == []
+    assert result.garmin_only == []
+
+
+def test_compare_default_named_garmin_with_custom_strava_still_flags() -> None:
+    g = _g(title="Bournemouth Running", distance_m=9011.0)
+    s = _strava(name="Easy Run - 9km", distance_m=9000.0)
+    result = garmin_compare.compare(garmin=[g], strava=[s])
+    fields = {m.field for m in result.mismatches}
+    assert "distance_m" in fields
+    assert "title" in fields  # different titles still flag
+
+
+def test_compare_default_named_strava_with_custom_garmin_still_flags() -> None:
+    g = _g(title="Easy Run - 9km", distance_m=9011.0)
+    s = _strava(name="Morning Run", distance_m=9000.0)
+    result = garmin_compare.compare(garmin=[g], strava=[s])
+    fields = {m.field for m in result.mismatches}
+    assert "distance_m" in fields
+    assert "title" in fields
+
+
+def test_compare_strava_afternoon_run_is_treated_as_default() -> None:
+    """Afternoon is one of Strava's five auto-name time-of-day prefixes."""
+    g = _g(title="Bournemouth Running")
+    s = _strava(name="Afternoon Run")
+    result = garmin_compare.compare(garmin=[g], strava=[s])
+    assert result.mismatches == []
+    assert result.strava_only == []  # pair still consumed paired_id
+
+
+def test_compare_strava_random_prefix_is_not_treated_as_default() -> None:
+    """A non-default Strava prefix (e.g. user-typed) still flags normally."""
+    g = _g(title="Bournemouth Running")
+    s = _strava(name="Random Run")
+    result = garmin_compare.compare(garmin=[g], strava=[s])
+    title_mismatches = [m for m in result.mismatches if m.field == "title"]
+    assert len(title_mismatches) == 1
+
+
 def test_compare_handles_strava_local_with_trailing_z() -> None:
     """Strava serialises start_date_local with a misleading trailing Z.
 

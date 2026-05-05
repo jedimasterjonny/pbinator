@@ -7,6 +7,7 @@ a ``GarminComparison``. No I/O, no clock reads, no DB.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from operator import itemgetter
@@ -28,6 +29,33 @@ SPORT_MAP: dict[str, str] = {
 }
 
 PAIRING_WINDOW_S = 60
+
+# When a paired activity carries a default-generated name on BOTH sides — i.e.
+# the user never bothered to title it on Strava and never bothered to title it
+# on Garmin Connect — every field comparison on that pair is noise rather than
+# signal. The pair still consumes a paired_id (so it doesn't surface as
+# Strava-only / Garmin-only), but FIELD_RULES are skipped.
+#
+# Strava's auto-name format: "<TimeOfDay> <SportWord>" (e.g. "Morning Run").
+# Garmin Connect's auto-name format: "<Location> Running" (e.g. "London Running").
+_STRAVA_DEFAULT_NAME_RE = re.compile(
+    r"^(?:Morning|Lunch|Afternoon|Evening|Night)\s",
+)
+_GARMIN_DEFAULT_TITLE_RE = re.compile(r"(?:^|\s)Running$")
+
+
+def _is_default_named_pair(garmin_title: str, strava_name: str) -> bool:
+    """True when both sides carry an auto-generated name with no user override.
+
+    Returns:
+        ``True`` if Strava's name starts with one of Strava's auto-name
+        time prefixes AND Garmin's title ends with the auto-name word
+        ``Running``; ``False`` otherwise.
+    """
+    return bool(
+        _STRAVA_DEFAULT_NAME_RE.match(strava_name)
+        and _GARMIN_DEFAULT_TITLE_RE.search(garmin_title),
+    )
 
 
 def _parse_strava_local(value: str) -> datetime:
@@ -244,6 +272,30 @@ def _eval_rule(
     )
 
 
+def _pick_pair(
+    g: GarminActivity,
+    parsed: list[tuple[Activity, datetime, dict[str, Any]]],
+) -> tuple[Activity, dict[str, Any]] | None:
+    """Return the closest Strava pair within ``PAIRING_WINDOW_S`` of ``g``.
+
+    Tie-break is on lower ``activity_id``.
+
+    Returns:
+        ``(activity, raw_json_dict)`` for the chosen pair, or ``None`` if no
+        Strava activity falls in the window.
+    """
+    candidates: list[tuple[float, int, Activity, dict[str, Any]]] = []
+    for activity, s_local, raw in parsed:
+        delta = abs((s_local - g.start_local).total_seconds())
+        if delta <= PAIRING_WINDOW_S:
+            candidates.append((delta, activity.activity_id, activity, raw))
+    if not candidates:
+        return None
+    candidates.sort(key=itemgetter(0, 1))
+    _, _, chosen, raw = candidates[0]
+    return chosen, raw
+
+
 def compare(
     *,
     garmin: Sequence[GarminActivity],
@@ -276,17 +328,14 @@ def compare(
     paired_ids: set[int] = set()
 
     for g in garmin:
-        candidates: list[tuple[float, int, Activity, dict[str, Any]]] = []
-        for activity, s_local, raw in parsed:
-            delta = abs((s_local - g.start_local).total_seconds())
-            if delta <= PAIRING_WINDOW_S:
-                candidates.append((delta, activity.activity_id, activity, raw))
-        if not candidates:
+        pair = _pick_pair(g, parsed)
+        if pair is None:
             garmin_only.append(GarminOnly(garmin=g))
             continue
-        candidates.sort(key=itemgetter(0, 1))
-        _, _, chosen, raw = candidates[0]
+        chosen, raw = pair
         paired_ids.add(chosen.activity_id)
+        if _is_default_named_pair(g.title, chosen.name):
+            continue
         for rule in FIELD_RULES:
             mismatch = _eval_rule(rule, g, chosen, raw)
             if mismatch is not None:
