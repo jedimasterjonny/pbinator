@@ -345,9 +345,11 @@ def _render_whoop_tab(session: Session, athlete_id: int, settings: Settings) -> 
 
 def _render_garmin_tab(session: Session, athlete_id: int, settings: Settings) -> None:
     """Render the Garmin comparison tab body."""
-    uploaded = st.file_uploader("Replace Garmin CSV for this session", type=["csv"])
+    uploaded = st.file_uploader("Replace Garmin CSV", type=["csv"])
     if uploaded is not None:
         text = uploaded.getvalue().decode("utf-8")
+        settings.garmin_csv_path.parent.mkdir(parents=True, exist_ok=True)
+        settings.garmin_csv_path.write_text(text, encoding="utf-8")
     elif settings.garmin_csv_path.exists():
         text = settings.garmin_csv_path.read_text(encoding="utf-8")
     else:
