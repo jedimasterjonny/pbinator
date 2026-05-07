@@ -15,7 +15,7 @@ This file is managed by [python-template](https://github.com/jedimasterjonny/pyt
 - **just** wraps the canonical commands. Discover with `just`. Run `just check` (lint + fmt-check + typecheck + test) before committing.
 - **ruff** is configured with `select = ["ALL"]` + preview rules. Don't add `# noqa` without a justifying comment.
 - **ty** runs in strict mode with all warn/ignore-default rules escalated to error.
-- **pytest** enforces 100% branch coverage, `filterwarnings = ["error"]`, a 10s per-test timeout, and **network is blocked** (`pytest-socket`). Mock or use `pytest.mark.enable_socket` deliberately.
+- **pytest** enforces 100% branch coverage, `filterwarnings = ["error"]`, a 10s per-test timeout, and **network is blocked** by an autouse fixture in `tests/conftest.py` that monkeypatches `socket.socket` to raise. Mock external calls (e.g. with `respx`) or request the `allow_socket` fixture deliberately for one test.
 - **pre-commit** runs hygiene + ruff + ty on commit, pytest on push, and conventional-commits on the commit message.
 
 ## Workflow
@@ -47,7 +47,7 @@ Lint, type, and coverage suppressions are escape hatches, not defaults.
 
 - Tests cover **behaviour**, not lines. Write the test that proves the change is correct; coverage is a side effect, not a target.
 - Never write a trivial assertion (e.g. `assert module is not None`) just to lift coverage. If a branch is genuinely uncoverable, exclude it deliberately via `[tool.coverage.report] exclude_also` with justification.
-- Network is blocked in tests; mock external calls. Don't reach for `pytest.mark.enable_socket` casually.
+- Network is blocked in tests; mock external calls. Don't reach for the `allow_socket` fixture casually.
 
 ## Never bypass guard rails
 
