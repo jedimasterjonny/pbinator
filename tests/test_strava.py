@@ -60,7 +60,7 @@ def _settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
     monkeypatch.setenv("STRAVA_REDIRECT_URI", "http://localhost:8501/")
     # ty: see test_settings.py for justification of the missing-argument ignore
-    return Settings()  # ty: ignore[missing-argument]
+    return Settings()
 
 
 def test_build_authorize_url_contains_required_params(

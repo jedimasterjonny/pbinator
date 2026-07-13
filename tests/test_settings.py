@@ -13,10 +13,6 @@ def isolated_settings_cls(
 ) -> type[Settings]:
     """Settings subclass that ignores any local .env file during tests.
 
-    Call sites use ``# ty: ignore[missing-argument]`` because ty cannot perform
-    flow-sensitive analysis across pydantic-settings' env-var injection, so it
-    incorrectly reports the required fields as missing arguments.
-
     Returns:
         A Settings subclass configured to read from environment variables only.
     """
@@ -43,7 +39,7 @@ def test_strava_credentials_load_from_env(
     monkeypatch.setenv("STRAVA_CLIENT_ID", "client-123")
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
 
-    s = isolated_settings_cls()  # ty: ignore[missing-argument]
+    s = isolated_settings_cls()
 
     assert s.strava_client_id == "client-123"
     assert s.strava_client_secret.get_secret_value() == "secret-xyz"
@@ -55,7 +51,7 @@ def test_redirect_uri_defaults_to_localhost(
     monkeypatch.setenv("STRAVA_CLIENT_ID", "client-123")
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
 
-    s = isolated_settings_cls()  # ty: ignore[missing-argument]
+    s = isolated_settings_cls()
 
     assert s.strava_redirect_uri == "http://localhost:8501/"
 
@@ -67,7 +63,7 @@ def test_redirect_uri_can_be_overridden(
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
     monkeypatch.setenv("STRAVA_REDIRECT_URI", "http://localhost:9000/")
 
-    s = isolated_settings_cls()  # ty: ignore[missing-argument]
+    s = isolated_settings_cls()
 
     assert s.strava_redirect_uri == "http://localhost:9000/"
 
@@ -76,7 +72,7 @@ def test_missing_credentials_raises_validation_error(
     isolated_settings_cls: type[Settings],
 ) -> None:
     with pytest.raises(ValidationError):
-        isolated_settings_cls()  # ty: ignore[missing-argument]
+        isolated_settings_cls()
 
 
 def test_db_path_defaults_to_data_pbinator_db(
@@ -85,7 +81,7 @@ def test_db_path_defaults_to_data_pbinator_db(
     monkeypatch.setenv("STRAVA_CLIENT_ID", "client-123")
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
 
-    s = isolated_settings_cls()  # ty: ignore[missing-argument]
+    s = isolated_settings_cls()
 
     assert s.pbinator_db_path == Path("data/pbinator.db")
 
@@ -97,7 +93,7 @@ def test_db_path_can_be_overridden(
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
     monkeypatch.setenv("PBINATOR_DB_PATH", "/tmp/custom.db")  # noqa: S108 — test fixture path, not real I/O
 
-    s = isolated_settings_cls()  # ty: ignore[missing-argument]
+    s = isolated_settings_cls()
 
     assert s.pbinator_db_path == Path("/tmp/custom.db")  # noqa: S108 — same as above
 
@@ -108,7 +104,7 @@ def test_whoop_csv_path_defaults_to_data_workouts_csv(
     monkeypatch.setenv("STRAVA_CLIENT_ID", "client-123")
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
 
-    s = isolated_settings_cls()  # ty: ignore[missing-argument]
+    s = isolated_settings_cls()
 
     assert s.whoop_csv_path == Path("data/workouts.csv")
 
@@ -120,7 +116,7 @@ def test_whoop_csv_path_can_be_overridden(
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
     monkeypatch.setenv("WHOOP_CSV_PATH", "/tmp/custom-whoop.csv")  # noqa: S108 — test fixture path
 
-    s = isolated_settings_cls()  # ty: ignore[missing-argument]
+    s = isolated_settings_cls()
 
     assert s.whoop_csv_path == Path("/tmp/custom-whoop.csv")  # noqa: S108 — same as above
 
@@ -131,7 +127,7 @@ def test_garmin_csv_path_defaults_to_data_activities_csv(
     monkeypatch.setenv("STRAVA_CLIENT_ID", "client-123")
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
 
-    s = isolated_settings_cls()  # ty: ignore[missing-argument]
+    s = isolated_settings_cls()
 
     assert s.garmin_csv_path == Path("data/Activities.csv")
 
@@ -143,6 +139,6 @@ def test_garmin_csv_path_can_be_overridden(
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-xyz")
     monkeypatch.setenv("GARMIN_CSV_PATH", "/tmp/custom-garmin.csv")  # noqa: S108 — test fixture path
 
-    s = isolated_settings_cls()  # ty: ignore[missing-argument]
+    s = isolated_settings_cls()
 
     assert s.garmin_csv_path == Path("/tmp/custom-garmin.csv")  # noqa: S108 — same as above

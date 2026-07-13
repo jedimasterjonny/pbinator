@@ -91,7 +91,7 @@ def _settings(tmp_path_str: str, monkeypatch: pytest.MonkeyPatch) -> Settings:
     monkeypatch.setenv("STRAVA_CLIENT_ID", "client-1")
     monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-1")
     monkeypatch.setenv("PBINATOR_DB_PATH", tmp_path_str)
-    return Settings()  # ty: ignore[missing-argument]
+    return Settings()
 
 
 def _token() -> TokenPayload:

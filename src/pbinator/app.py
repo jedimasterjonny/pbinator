@@ -37,7 +37,7 @@ _REFRESH_WINDOW_SECONDS = 60
 def _load_settings() -> Settings | None:
     try:
         # pydantic-settings injects required fields from env vars; ty can't see this.
-        return Settings()  # ty: ignore[missing-argument]
+        return Settings()
     except ValidationError:
         st.error("Configure STRAVA_CLIENT_ID and STRAVA_CLIENT_SECRET in .env")
         st.stop()
