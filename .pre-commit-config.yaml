@@ -25,20 +25,13 @@ repos:
       - id: debug-statements
       - id: detect-private-key
 
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.11
-    hooks:
-      - id: ruff-check
-        args: [--fix]
-      - id: ruff-format
-
   - repo: https://github.com/astral-sh/uv-pre-commit
-    rev: 0.11.7
+    rev: 0.11.28
     hooks:
       - id: uv-lock
 
   - repo: https://github.com/crate-ci/typos
-    rev: v1.45.1
+    rev: v1.48.0
     hooks:
       - id: typos
 
@@ -50,6 +43,20 @@ repos:
 
   - repo: local
     hooks:
+      # ruff, ty and pytest all run from the project venv, so the versions in
+      # uv.lock are the only ones that apply -- no second set of pins to drift.
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
       - id: ty
         name: ty check
         entry: uv run ty check
