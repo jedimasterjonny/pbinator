@@ -11,5 +11,8 @@
       "automerge": true,
       "automergeType": "branch"
     }
-  ]
+  ],
+  "pre-commit": {
+    "enabled": true
+  }
 }

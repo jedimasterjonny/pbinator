@@ -1,5 +1,5 @@
 # Changes here will be overwritten by Copier; DO NOT EDIT MANUALLY.
-_commit: 014ffb7
+_commit: 6f99051
 _src_path: https://github.com/jedimasterjonny/python-template
 author_email: me@jonnyoc.uk
 author_name: jedimasterjonny
@@ -8,4 +8,4 @@ package_name: pbinator
 project_description: ''
 project_name: pbinator
 project_slug: pbinator
-python_version: '3.13'
+python_version: '3.14'
