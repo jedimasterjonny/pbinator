@@ -6,6 +6,9 @@ activities against Whoop and Garmin bulk-export CSVs.
 
 ## Setup
 
+Requires **Python 3.14** and [uv](https://docs.astral.sh/uv/). `uv` will
+fetch the right interpreter for you.
+
 1. Install dependencies (creates `.venv`):
 
    ```sh
@@ -54,9 +57,10 @@ yet. While backfill is still in progress, the tab shows a small caption
 telling you how many Runs are awaiting detail.
 
 The **Whoop** tab compares a Whoop bulk-export CSV against your Strava
-activities, treating Strava as the source of truth. By default it reads
-`data/workouts.csv`; a file uploader on the tab lets you swap in a
-different CSV for the current session. Whoop and Strava activities are
+activities, treating Strava as the source of truth. It reads
+`data/workouts.csv`. The file uploader on the tab **overwrites that file**
+with whatever you upload — the upload is saved, not scoped to the session,
+so it replaces any CSV already there. Whoop and Strava activities are
 paired sport-aware within ±10 minutes of each other; pairs whose start
 or end time differ by more than ±2 minutes appear in the **Time
 mismatches** table (with a clickable Strava link). Whoop rows with no
@@ -70,15 +74,18 @@ not compared because the Whoop export does not carry it.
 The **Garmin** tab compares a Garmin Connect bulk-export CSV against
 your Strava activities, treating Garmin as the upstream source of truth
 (Strava auto-syncs from Garmin, so any disagreement is drift Strava
-introduced). By default it reads `data/Activities.csv`; a file uploader
-on the tab lets you swap in a different CSV for the current session.
+introduced). It reads `data/Activities.csv`. As on the Whoop tab, the
+file uploader **overwrites that file** with whatever you upload.
 Pairing is sport-agnostic within ±60 seconds on `start_date_local`; the
 sport difference itself becomes a flagged field rather than a missing
 pair. Eight fields are compared per pair — Activity Type, Title, start
 time, distance, moving and elapsed time, calories, and avg HR — with
-small per-field tolerances (10 m on distance, 10 s on moving time, 2 s
-on elapsed time and start drift, 1 unit on HR/calories, strict
-equality on Title and sport). Cadence, power, elevation, and max HR
+small per-field tolerances (10 m on distance, 10 s on moving time, 5 s
+on elapsed time, 2 s on start drift, 1 unit on HR/calories, strict
+equality on Title and sport). The elapsed-time tolerance widens to 25 s
+for September activities: that month shows a consistent 13–21 s
+Garmin-vs-Strava drift that appears to be a one-off platform-side
+change rather than real sync drift. Cadence, power, elevation, and max HR
 are deliberately not compared: Garmin and Strava use different
 smoothing/averaging/correction algorithms on the same raw streams —
 power 2–20 W, cadence 0–11 spm, elevation 1–17 m, max HR 2–10 bpm —
@@ -105,5 +112,8 @@ pair (absent ≠ mismatched).
 
 ## Development
 
-`just check` runs lint, format-check, type-check, and tests with 100% branch
-coverage.
+`just check` runs lint, format-check, type-check, and tests. Coverage is
+enforced at 100% branch coverage over the logic modules; `app.py` — the
+Streamlit and OAuth glue — is excluded and exercised by hand.
+
+Run `just` to list every command.
