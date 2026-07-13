@@ -6,7 +6,7 @@ no global state. Returns ``SyncResult`` rather than raising into callers.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from pbinator.activities_api import ActivityPage, RateLimitUsage
-    from pbinator.settings import Settings
     from pbinator.strava import TokenPayload
 
 
@@ -89,11 +88,17 @@ def _iso_to_epoch(iso_utc: str) -> int:
     return int(datetime.fromisoformat(iso_utc).timestamp())
 
 
-def _process_detail_fetches_for_page(  # noqa: PLR0913, PLR0917 — six params are all distinct concerns for this private helper
-    client: httpx.Client,
-    token_access: str,
-    session: Session,
-    athlete_id: int,
+@dataclass(frozen=True)
+class _Ctx:
+    """The handles every step of one sync pass needs."""
+
+    client: httpx.Client
+    token: TokenPayload
+    session: Session
+
+
+def _process_detail_fetches_for_page(
+    ctx: _Ctx,
     activities: list[dict[str, Any]],
     usage_in: RateLimitUsage,
 ) -> RateLimitUsage:
@@ -107,8 +112,11 @@ def _process_detail_fetches_for_page(  # noqa: PLR0913, PLR0917 — six params a
     Raises:
         _RateBudgetError: when the preflight check trips before a fetch.
     """
+    athlete_id = ctx.token.athlete_id
     run_ids = [int(a["id"]) for a in activities if str(a["sport_type"]) == "Run"]
-    already_fetched = store.already_fetched_run_ids(session, athlete_id=athlete_id, run_ids=run_ids)
+    already_fetched = store.already_fetched_run_ids(
+        ctx.session, athlete_id=athlete_id, run_ids=run_ids
+    )
 
     usage = usage_in
     for activity in activities:
@@ -119,19 +127,19 @@ def _process_detail_fetches_for_page(  # noqa: PLR0913, PLR0917 — six params a
         if would_exceed_next_call(usage):
             raise _RateBudgetError(usage)
         fetched = best_efforts_api.fetch_detail(
-            client, token_access, activity_id=int(activity["id"])
+            ctx.client, ctx.token.access_token, activity_id=int(activity["id"])
         )
         usage = fetched.usage
         rows = best_efforts_api.parse_best_efforts(fetched.detail)
-        with store.write_transaction(session):
+        with store.write_transaction(ctx.session):
             store.upsert_best_efforts(
-                session,
+                ctx.session,
                 athlete_id=athlete_id,
                 activity_id=int(activity["id"]),
                 efforts=rows,
             )
             store.mark_detail_fetched(
-                session,
+                ctx.session,
                 athlete_id=athlete_id,
                 activity_id=int(activity["id"]),
                 fetched_at=_now_iso(),
@@ -161,74 +169,99 @@ def _reconcile_deletions(
         return store.delete_activities_not_in(session, athlete_id=athlete_id, kept_ids=seen_ids)
 
 
-def run(
+@dataclass
+class _Progress:
+    """Running totals for one pagination pass.
+
+    Mutated in place by ``_fetch_pages`` so that partial work survives an
+    exception raised part-way through the walk.
+    """
+
+    max_seen_start: str | None
+    seen_ids: set[int] = field(default_factory=set)
+    pages_fetched: int = 0
+    inserted: int = 0
+    rate_limited: bool = False
+    usage: RateLimitUsage | None = None
+
+
+def _fetch_pages(
+    ctx: _Ctx,
+    progress: _Progress,
+    on_page: Callable[[int, int], None] | None,
+    *,
+    after: int | None,
+) -> None:
+    """Walk activity pages from ``after`` onward, upserting each one.
+
+    Stops on an empty page or when the next call would breach the rate limit.
+    """
+    athlete_id = ctx.token.athlete_id
+    page = 1
+    while True:
+        page_data: ActivityPage = activities_api.fetch_page(
+            ctx.client,
+            ctx.token.access_token,
+            after=after,
+            page=page,
+            per_page=_PER_PAGE,
+        )
+        progress.pages_fetched += 1
+        usage = page_data.usage
+        progress.usage = usage
+        if not page_data.activities:
+            return
+        with store.write_transaction(ctx.session):  # one transaction per page
+            for activity in page_data.activities:
+                store.upsert_activity(ctx.session, athlete_id=athlete_id, activity=activity)
+                progress.seen_ids.add(int(activity["id"]))
+                progress.inserted += 1
+                progress.max_seen_start = max_iso(
+                    progress.max_seen_start, str(activity["start_date"])
+                )
+        usage = _process_detail_fetches_for_page(ctx, page_data.activities, usage)
+        progress.usage = usage
+        if on_page is not None:
+            on_page(page, len(page_data.activities))
+        if would_exceed_next_call(usage):
+            progress.rate_limited = True
+            return
+        page += 1
+
+
+def _sync(
     token: TokenPayload,
-    settings: Settings,  # noqa: ARG001 — reserved for future use; kept for interface symmetry
     session: Session,
-    on_page: Callable[[int, int], None] | None = None,
+    on_page: Callable[[int, int], None] | None,
+    *,
+    incremental: bool,
 ) -> SyncResult:
-    """Run an incremental sync for ``token.athlete_id``.
+    """Paginate, upsert, and advance the cursor for ``token.athlete_id``.
+
+    When ``incremental``, resume from the stored cursor and never delete.
+    Otherwise re-fetch everything and reconcile deletions on a clean run.
 
     Returns:
-        A ``SyncResult`` describing the outcome. Cursor is always advanced
-        with progress made (if any), even on errors.
+        A ``SyncResult`` describing the outcome.
     """
+    # Seed from the existing cursor so a no-op pass (empty first page, or an
+    # error before any page completes) does not wipe the stored position.
     cursor = store.get_cursor(session, athlete_id=token.athlete_id)
-    after_epoch: int | None = (
-        _iso_to_epoch(cursor.last_activity_start)
-        if cursor is not None and cursor.last_activity_start is not None
-        else None
-    )
-    max_seen_start: str | None = cursor.last_activity_start if cursor is not None else None
+    last_start: str | None = cursor.last_activity_start if cursor is not None else None
+    after = _iso_to_epoch(last_start) if incremental and last_start is not None else None
 
-    page = 1
-    pages_fetched = 0
-    inserted = 0
-    rate_limited = False
+    progress = _Progress(max_seen_start=last_start)
     error: str | None = None
-    usage: RateLimitUsage | None = None
 
     try:
         with httpx.Client(timeout=_HTTP_TIMEOUT_SECONDS) as client:
-            while True:
-                page_data: ActivityPage = activities_api.fetch_page(
-                    client,
-                    token.access_token,
-                    after=after_epoch,
-                    page=page,
-                    per_page=_PER_PAGE,
-                )
-                pages_fetched += 1
-                usage = page_data.usage
-                if not page_data.activities:
-                    break
-                with store.write_transaction(session):  # one transaction per page
-                    for activity in page_data.activities:
-                        store.upsert_activity(
-                            session, athlete_id=token.athlete_id, activity=activity
-                        )
-                        inserted += 1
-                        max_seen_start = max_iso(max_seen_start, str(activity["start_date"]))
-                usage = _process_detail_fetches_for_page(
-                    client,
-                    token.access_token,
-                    session,
-                    token.athlete_id,
-                    page_data.activities,
-                    usage,
-                )
-                if on_page is not None:
-                    on_page(page, len(page_data.activities))
-                if would_exceed_next_call(usage):
-                    rate_limited = True
-                    break
-                page += 1
+            _fetch_pages(_Ctx(client, token, session), progress, on_page, after=after)
     except _RateBudgetError as exc:
-        rate_limited = True
-        usage = exc.usage
+        progress.rate_limited = True
+        progress.usage = exc.usage
     except RateLimited as exc:
-        rate_limited = True
-        usage = exc.usage if exc.usage is not None else usage
+        progress.rate_limited = True
+        progress.usage = exc.usage if exc.usage is not None else progress.usage
     except AuthError:
         error = "auth_failed"
     except httpx.HTTPError:
@@ -238,23 +271,48 @@ def run(
             store.update_cursor(
                 session,
                 athlete_id=token.athlete_id,
-                last_activity_start=max_seen_start,
+                last_activity_start=progress.max_seen_start,
                 last_synced_at=_now_iso(),
             )
 
-    return SyncResult(
-        inserted_or_updated=inserted,
-        pages_fetched=pages_fetched,
-        rate_limited=rate_limited,
-        usage=usage,
-        error=error,
-        deleted=0,
+    deleted = (
+        0
+        if incremental
+        else _reconcile_deletions(
+            session,
+            token.athlete_id,
+            progress.seen_ids,
+            rate_limited=progress.rate_limited,
+            error=error,
+        )
     )
+
+    return SyncResult(
+        inserted_or_updated=progress.inserted,
+        pages_fetched=progress.pages_fetched,
+        rate_limited=progress.rate_limited,
+        usage=progress.usage,
+        error=error,
+        deleted=deleted,
+    )
+
+
+def run(
+    token: TokenPayload,
+    session: Session,
+    on_page: Callable[[int, int], None] | None = None,
+) -> SyncResult:
+    """Run an incremental sync for ``token.athlete_id``.
+
+    Returns:
+        A ``SyncResult`` describing the outcome. Cursor is always advanced
+        with progress made (if any), even on errors.
+    """
+    return _sync(token, session, on_page, incremental=True)
 
 
 def full_rescan(
     token: TokenPayload,
-    settings: Settings,  # noqa: ARG001 — reserved for future use; kept for interface symmetry
     session: Session,
     on_page: Callable[[int, int], None] | None = None,
 ) -> SyncResult:
@@ -268,83 +326,4 @@ def full_rescan(
     Returns:
         A ``SyncResult`` with ``deleted`` set on a clean reconciling run, else 0.
     """
-    seen_ids: set[int] = set()
-    # Seed from the existing cursor so a no-op rescan (empty first page,
-    # network/auth/rate-limit error before any page completes) does not wipe
-    # the previously stored last_activity_start when update_cursor runs below.
-    cursor = store.get_cursor(session, athlete_id=token.athlete_id)
-    max_seen_start: str | None = cursor.last_activity_start if cursor is not None else None
-    page = 1
-    pages_fetched = 0
-    inserted = 0
-    rate_limited = False
-    error: str | None = None
-    usage: RateLimitUsage | None = None
-
-    try:
-        with httpx.Client(timeout=_HTTP_TIMEOUT_SECONDS) as client:
-            while True:
-                page_data = activities_api.fetch_page(
-                    client,
-                    token.access_token,
-                    after=None,
-                    page=page,
-                    per_page=_PER_PAGE,
-                )
-                pages_fetched += 1
-                usage = page_data.usage
-                if not page_data.activities:
-                    break
-                with store.write_transaction(session):
-                    for activity in page_data.activities:
-                        store.upsert_activity(
-                            session, athlete_id=token.athlete_id, activity=activity
-                        )
-                        seen_ids.add(int(activity["id"]))
-                        inserted += 1
-                        max_seen_start = max_iso(max_seen_start, str(activity["start_date"]))
-                usage = _process_detail_fetches_for_page(
-                    client,
-                    token.access_token,
-                    session,
-                    token.athlete_id,
-                    page_data.activities,
-                    usage,
-                )
-                if on_page is not None:
-                    on_page(page, len(page_data.activities))
-                if would_exceed_next_call(usage):
-                    rate_limited = True
-                    break
-                page += 1
-    except _RateBudgetError as exc:
-        rate_limited = True
-        usage = exc.usage
-    except RateLimited as exc:
-        rate_limited = True
-        usage = exc.usage if exc.usage is not None else usage
-    except AuthError:
-        error = "auth_failed"
-    except httpx.HTTPError:
-        error = "http_error"
-
-    deleted = _reconcile_deletions(
-        session, token.athlete_id, seen_ids, rate_limited=rate_limited, error=error
-    )
-
-    with store.write_transaction(session):
-        store.update_cursor(
-            session,
-            athlete_id=token.athlete_id,
-            last_activity_start=max_seen_start,
-            last_synced_at=_now_iso(),
-        )
-
-    return SyncResult(
-        inserted_or_updated=inserted,
-        pages_fetched=pages_fetched,
-        rate_limited=rate_limited,
-        usage=usage,
-        error=error,
-        deleted=deleted,
-    )
+    return _sync(token, session, on_page, incremental=False)
