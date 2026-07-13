@@ -306,8 +306,12 @@ def already_fetched_run_ids(
 
 
 _VALID_RANGE_FIELDS = ("start_date", "start_date_local")
-_UTC_TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
-_LOCAL_TS_FMT = "%Y-%m-%dT%H:%M:%S"
+# Strava suffixes BOTH columns with "Z" -- start_date_local carries one too, even
+# though the offset has already been applied and the value is local, not UTC (see
+# garmin_compare._parse_strava_local). upsert_activity stores each verbatim, so
+# bounds must carry the "Z" or a lexical comparison drops rows sitting exactly on
+# an inclusive boundary.
+_TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 
 
 def activities_in_range(
@@ -325,8 +329,7 @@ def activities_in_range(
     bounds are inclusive. Results are ordered by ``field`` ascending.
 
     The bounds are stringified to match the column's stored encoding so the
-    SQLite comparison is purely lexical: UTC rows end with ``Z``; local rows
-    do not.
+    SQLite comparison is purely lexical. Both columns end with ``Z``.
 
     Returns:
         A list of ``Activity`` rows; empty if nothing falls in the window.
@@ -338,12 +341,12 @@ def activities_in_range(
         msg = f"unknown field: {field!r}"
         raise ValueError(msg)
     if field == "start_date":
-        lo = start.astimezone(UTC).strftime(_UTC_TS_FMT)
-        hi = end.astimezone(UTC).strftime(_UTC_TS_FMT)
+        lo = start.astimezone(UTC).strftime(_TS_FMT)
+        hi = end.astimezone(UTC).strftime(_TS_FMT)
         column = Activity.start_date
     else:
-        lo = start.strftime(_LOCAL_TS_FMT)
-        hi = end.strftime(_LOCAL_TS_FMT)
+        lo = start.strftime(_TS_FMT)
+        hi = end.strftime(_TS_FMT)
         column = Activity.start_date_local
     # ``column`` is a SQLAlchemy ``InstrumentedAttribute`` whose ``>=``/``<=``
     # build SQL expressions; ty models it as the underlying ``str | None``.
