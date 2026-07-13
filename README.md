@@ -1,29 +1,42 @@
 # pbinator
 
-A small Streamlit app that signs in with Strava, surfaces your running
-personal bests across the ten standard race distances, and reconciles your
-activities against Whoop and Garmin bulk-export CSVs.
+A small Streamlit app that signs in with Strava, surfaces your running personal
+bests across the eleven standard race distances, and reconciles your activities
+against Whoop and Garmin bulk-export CSVs.
+
+- **[Personal bests](#personal-bests)** — every date you broke a PB, one column per distance.
+- **[Whoop comparison](#whoop-comparison)** — find workouts Whoop recorded that never reached Strava.
+- **[Garmin comparison](#garmin-comparison)** — find where Strava's copy has drifted from Garmin's.
+
+Everything runs locally against your own Strava API keys. Nothing is uploaded
+anywhere; your data stays in `data/pbinator.db`.
+
+---
 
 ## Setup
 
-Requires **Python 3.14** and [uv](https://docs.astral.sh/uv/). `uv` will
-fetch the right interpreter for you.
+Requires **Python 3.14** and [uv](https://docs.astral.sh/uv/) — `uv` will fetch
+the right interpreter for you.
 
-1. Install dependencies (creates `.venv`):
+1. **Install dependencies** (creates `.venv`):
 
    ```sh
    uv sync
    ```
 
-2. Register a Strava API application at <https://www.strava.com/settings/api>.
+2. **Register a Strava API application** at <https://www.strava.com/settings/api>.
    Set **Authorization Callback Domain** to `localhost`.
 
-3. Copy `.env.example` to `.env` and fill in `STRAVA_CLIENT_ID` and
-   `STRAVA_CLIENT_SECRET` from your Strava app:
+3. **Configure credentials.** Copy the example env file and fill in
+   `STRAVA_CLIENT_ID` and `STRAVA_CLIENT_SECRET` from your Strava app:
 
    ```sh
    cp .env.example .env
    ```
+
+   `.env.example` lists every setting, including optional paths for the database
+   and the two CSVs. Unknown keys are rejected, so a typo fails loudly at startup
+   rather than being silently ignored.
 
 ## Running
 
@@ -32,88 +45,160 @@ just run
 ```
 
 This launches the app at <http://localhost:8501/>. Click **Authorize with
-Strava**, approve on the Strava consent screen, and you should return logged in
-as your athlete. The session is persisted in a browser cookie for 90 days and
-the access token is refreshed automatically before expiry.
+Strava** and approve on the consent screen; you should return logged in as your
+athlete. The session persists in a browser cookie for 90 days, and the access
+token is refreshed automatically before it expires.
 
-The logged-in view has four tabs: **Sync**, **PBs**, **Whoop**, and **Garmin**.
+The logged-in view has four tabs — **Sync**, **PBs**, **Whoop**, **Garmin** —
+covered below.
 
-The **Sync** tab is where you click **Sync activities** to populate
-`data/pbinator.db` with your Strava history. The first sync paginates
-your full history; subsequent syncs only fetch new activities. For each
-Run, the sync also fetches the activity's `best_efforts` segments
-(400m, ½mi, 1km, 1mi, 2mi, 5km, 10km, 15km, Half-Marathon, Marathon).
-The app tracks Strava's read rate limit and will stop early if it gets
-close — just click **Sync activities** again later to resume. The
-result message tells you how many Runs are still awaiting detail. Use
-**Full rescan** (with the confirmation checkbox) to re-fetch everything
-and reconcile any activities you've deleted on Strava.
+---
 
-The **PBs** tab shows a table of dates a personal best was broken
-(newest first), with one column per distance. Cells where a PB was
-broken on that date are highlighted; other cells show the running best
-as of that date, or an em-dash if no PB has been set at that distance
-yet. While backfill is still in progress, the tab shows a small caption
-telling you how many Runs are awaiting detail.
+## Syncing your history
+
+The **Sync** tab populates `data/pbinator.db` from your Strava history. This is
+the foundation for everything else, so run it first.
+
+| Button | What it does |
+| --- | --- |
+| **Sync activities** | First run paginates your entire history; later runs fetch only what's new. |
+| **Full rescan** | Re-fetches everything and reconciles activities you deleted on Strava. Behind a confirmation checkbox. |
+
+For each **Run**, the sync also fetches that activity's `best_efforts` segments —
+the raw material for the PB table.
+
+**On rate limits.** Strava caps how much you can read in a window. The app tracks
+this and stops early rather than getting cut off mid-flight. If it stops, the
+result message tells you how many Runs are still awaiting detail — just click
+**Sync activities** again later and it picks up exactly where it left off.
+
+## Personal bests
+
+The **PBs** tab shows a table of **every date you broke a personal best**, newest
+first, with one column per distance:
+
+> 400m · ½mi · 1km · 1mi · 2mi · 5km · 10km · 15km · 10mi · Half · Marathon
+
+Reading a row:
+
+- **Highlighted cell** — you set a new PB at that distance on that date.
+- **Plain cell** — your running best at that distance *as of* that date.
+- **Em-dash (—)** — you hadn't set a PB at that distance yet.
+
+While the best-effort backfill is still running, a caption tells you how many
+Runs are still awaiting detail.
+
+---
+
+## Whoop comparison
 
 The **Whoop** tab compares a Whoop bulk-export CSV against your Strava
-activities, treating Strava as the source of truth. It reads
-`data/workouts.csv`. The file uploader on the tab **overwrites that file**
-with whatever you upload — the upload is saved, not scoped to the session,
-so it replaces any CSV already there. Whoop and Strava activities are
-paired sport-aware within ±10 minutes of each other; pairs whose start
-or end time differ by more than ±2 minutes appear in the **Time
-mismatches** table (with a clickable Strava link). Whoop rows with no
-Strava match — or whose Whoop sport doesn't map to a Strava `sport_type`
-(e.g. `Pilates`, `Activity`) — appear in the **Whoop-only** table,
-which has a "Filter by activity" multiselect to narrow it down. The
-Whoop CSV format must include `Cycle timezone`, `Workout start time`,
-`Workout end time`, `Duration (min)`, and `Activity name`; distance is
-not compared because the Whoop export does not carry it.
+activities, treating **Strava as the source of truth**. It answers: *what did
+Whoop record that Strava doesn't know about?*
 
-The **Garmin** tab compares a Garmin Connect bulk-export CSV against
-your Strava activities, treating Garmin as the upstream source of truth
-(Strava auto-syncs from Garmin, so any disagreement is drift Strava
-introduced). It reads `data/Activities.csv`. As on the Whoop tab, the
-file uploader **overwrites that file** with whatever you upload.
-Pairing is sport-agnostic within ±60 seconds on `start_date_local`; the
-sport difference itself becomes a flagged field rather than a missing
-pair. Eight fields are compared per pair — Activity Type, Title, start
-time, distance, moving and elapsed time, calories, and avg HR — with
-small per-field tolerances (10 m on distance, 10 s on moving time, 5 s
-on elapsed time, 2 s on start drift, 1 unit on HR/calories, strict
-equality on Title and sport). The elapsed-time tolerance widens to 25 s
-for September activities: that month shows a consistent 13–21 s
-Garmin-vs-Strava drift that appears to be a one-off platform-side
-change rather than real sync drift. Cadence, power, elevation, and max HR
-are deliberately not compared: Garmin and Strava use different
-smoothing/averaging/correction algorithms on the same raw streams —
-power 2–20 W, cadence 0–11 spm, elevation 1–17 m, max HR 2–10 bpm —
-and would fire on every paired activity. Systematic algorithmic
-divergence, not sync drift. Three sections render the result:
+Reads `data/workouts.csv`.
 
-- **Field mismatches** — one row per disagreeing field on a paired
-  activity, with a Field selectbox to filter (e.g. show only `title`
-  drift), the Garmin value, the Strava value, the signed delta, and a
-  clickable Strava link. Pairs that carry default-generated names on
-  both sides (Strava `Morning` / `Lunch` / `Afternoon` / `Evening` /
-  `Night Run` AND Garmin `<location> Running`) are skipped entirely —
-  their disagreements are noise, not drift.
-- **Garmin-only** — Garmin rows with no Strava counterpart in the ±60 s
-  pairing window (a missed sync from Garmin to Strava).
-- **Strava-only** — Strava activities inside the Garmin export's date
-  range with no Garmin counterpart (manual entries, or a sync from
-  another device that bypassed Garmin).
+> [!WARNING]
+> The file uploader **overwrites that file on disk**. The upload is saved, not
+> scoped to your session, so it replaces any CSV already there.
 
-The required Garmin columns are Activity Type, Date, Title, Distance,
-Calories, Time, Avg HR, and Elapsed Time; cells rendered as
-`--` parse to "absent" and the corresponding field is skipped for that
-pair (absent ≠ mismatched).
+**How activities are paired:** sport-aware, within **±10 minutes** of each other.
+
+Two tables render the result:
+
+- **Time mismatches** — paired activities whose start *or* end time differ by
+  more than **±2 minutes**, with a clickable Strava link.
+- **Whoop-only** — Whoop rows with no Strava match, *or* whose sport doesn't map
+  to a Strava `sport_type` at all (e.g. `Pilates`, `Activity`). A **Filter by
+  activity** multiselect narrows it down.
+
+**Required CSV columns:** `Cycle timezone`, `Workout start time`,
+`Workout end time`, `Duration (min)`, `Activity name`.
+
+Distance is not compared — the Whoop export doesn't carry it.
+
+---
+
+## Garmin comparison
+
+The **Garmin** tab compares a Garmin Connect bulk-export CSV against your Strava
+activities, treating **Garmin as the upstream source of truth**. Strava
+auto-syncs *from* Garmin, so any disagreement is drift Strava introduced.
+
+Reads `data/Activities.csv`.
+
+> [!WARNING]
+> As on the Whoop tab, the file uploader **overwrites that file on disk**.
+
+**How activities are paired:** sport-agnostic, within **±60 seconds** on
+`start_date_local`. Sport is deliberately *not* a pairing key — a sport
+disagreement becomes a flagged field rather than a missing pair.
+
+### Fields compared
+
+| Field | Tolerance |
+| --- | --- |
+| Activity Type | exact match |
+| Title | exact match |
+| Start time | 2 s |
+| Distance | 10 m |
+| Moving time | 10 s |
+| Elapsed time | **5 s** — widens to **25 s in September** (see below) |
+| Calories | 1 |
+| Avg HR | 1 bpm |
+
+**Why September is special.** September activities show a consistent 13–21 s
+elapsed-time drift between Garmin and Strava, which looks like a one-off
+platform-side change rather than genuine sync drift. The tolerance widens for
+that month only; 5 s everywhere else still surfaces real problems.
+
+### Fields deliberately *not* compared
+
+Cadence, power, elevation, and max HR. Garmin and Strava apply different
+smoothing, averaging, and correction algorithms to the same raw streams, so they
+disagree on essentially every paired activity:
+
+| Field | Typical divergence |
+| --- | --- |
+| Power | 2–20 W |
+| Cadence | 0–11 spm |
+| Elevation | 1–17 m |
+| Max HR | 2–10 bpm |
+
+That's systematic algorithmic divergence, not sync drift. Comparing them would
+flag everything and therefore tell you nothing.
+
+### Results
+
+- **Field mismatches** — one row per disagreeing field on a paired activity: the
+  Garmin value, the Strava value, the signed delta, and a clickable Strava link.
+  A **Field** selectbox filters to one field (e.g. show only `title` drift).
+
+  Pairs carrying *default-generated* names on **both** sides are skipped
+  entirely — Strava's `Morning`/`Lunch`/`Afternoon`/`Evening`/`Night Run` **and**
+  Garmin's `<location> Running`. Their disagreements are noise, not drift.
+
+- **Garmin-only** — Garmin rows with no Strava counterpart in the ±60 s window.
+  A sync from Garmin to Strava that never landed.
+
+- **Strava-only** — Strava activities inside the Garmin export's date range with
+  no Garmin counterpart. Manual entries, or a sync from another device that
+  bypassed Garmin.
+
+**Required CSV columns:** `Activity Type`, `Date`, `Title`, `Distance`,
+`Calories`, `Time`, `Avg HR`, `Elapsed Time`.
+
+Cells rendered as `--` parse to *absent*, and that field is skipped for that pair
+— absent is not the same as mismatched.
+
+---
 
 ## Development
 
-`just check` runs lint, format-check, type-check, and tests. Coverage is
-enforced at 100% branch coverage over the logic modules; `app.py` — the
-Streamlit and OAuth glue — is excluded and exercised by hand.
+```sh
+just check   # lint + format-check + type-check + tests
+just         # list every command
+```
 
-Run `just` to list every command.
+Coverage is enforced at **100% branch coverage** over the logic modules.
+`app.py` — the Streamlit and OAuth glue — is excluded and exercised by hand.
