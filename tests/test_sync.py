@@ -202,7 +202,54 @@ def test_run_breaks_when_rate_limit_preflight_trips(session: Session) -> None:
     assert result.inserted_or_updated == 2
     assert result.pages_fetched == 2
     assert cursor is not None
-    assert cursor.last_activity_start == "2024-04-16T07:00:00Z"
+    # The walk was truncated, so the watermark must NOT move -- see
+    # test_run_truncated_does_not_strand_older_activities for why.
+    assert cursor.last_activity_start is None
+
+
+@respx.mock
+def test_run_truncated_does_not_strand_older_activities(session: Session) -> None:
+    """A rate-limited cold start must not skip past the activities it never fetched.
+
+    Strava returns activities NEWEST FIRST. If a truncated pass advanced the
+    cursor to the newest activity it stored, the next sync would ask for
+    everything *after* that -- and the older activities still queued behind it
+    would be unreachable by any number of subsequent syncs.
+    """
+    newest = [_activity(101, "2024-06-20T07:00:00Z")]
+    oldest = [_activity(1, "2024-01-01T07:00:00Z")]
+    respx.get(_ACTIVITIES_URL).mock(
+        side_effect=[
+            # sync #1: page 1 lands, but the budget is spent -> truncates here.
+            httpx.Response(200, headers=_ok_headers(short_used=99), json=newest),
+            # sync #2: budget restored, so the walk starts over and completes.
+            httpx.Response(200, headers=_ok_headers(short_used=5), json=newest),
+            httpx.Response(200, headers=_ok_headers(short_used=6), json=oldest),
+            httpx.Response(200, headers=_ok_headers(short_used=7), json=[]),
+        ]
+    )
+    respx.get(url__regex=r".*/activities/\d+").mock(
+        return_value=httpx.Response(
+            200, headers=_ok_headers(short_used=8), json={"best_efforts": []}
+        )
+    )
+
+    first = run(_token(), session)
+    assert first.rate_limited is True
+    session.expire_all()
+    cursor = store.get_cursor(session, athlete_id=42)
+    assert cursor is not None
+    assert cursor.last_activity_start is None  # nothing was confirmed complete
+
+    # The retry re-lists from the top and reaches the older page.
+    second = run(_token(), session)
+    session.expire_all()
+    cursor = store.get_cursor(session, athlete_id=42)
+
+    assert second.rate_limited is False
+    assert cursor is not None
+    assert cursor.last_activity_start == "2024-06-20T07:00:00Z"  # now it may advance
+    assert store.count_activities(session, athlete_id=42) == 2  # the old one arrived
 
 
 @respx.mock
