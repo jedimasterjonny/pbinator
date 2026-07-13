@@ -1,7 +1,7 @@
 [project]
 name = "pbinator"
 version = "0.1.0"
-description = ""
+description = "Streamlit app that signs in with Strava, tracks your running personal bests across the ten standard race distances, and reconciles your activities against Whoop and Garmin exports"
 readme = "README.md"
 requires-python = ">=3.14,<3.15"
 license = "GPL-3.0-or-later"
