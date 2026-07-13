@@ -24,7 +24,6 @@ dev = [
     "ty>=0.0.30",
     "pytest>=8.0",
     "pytest-cov>=5.0",
-    "pytest-xdist>=3.5",
     "pytest-randomly>=3.15",
     "pytest-timeout>=2.3",
     "pre-commit>=4.0",
@@ -52,7 +51,7 @@ packages = ["src/pbinator"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py314"
 src = ["src", "tests"]
 respect-gitignore = true
 
@@ -77,7 +76,12 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101", "PLR2004", "SLF001", "ANN", "D"]
+# TC: pytest and respx introspect test signatures at runtime (respx.mock goes
+# through inspect.getfullargspec, which evaluates annotations), so an import
+# moved into a TYPE_CHECKING block fails collection with "unsupported
+# callable". Test modules are never imported by the app, so the rules buy
+# nothing here anyway.
+"tests/**/*.py" = ["S101", "PLR2004", "SLF001", "ANN", "D", "TC"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["pbinator"]
@@ -91,6 +95,15 @@ ban-relative-imports = "all"
 
 [tool.ruff.lint.flake8-type-checking]
 strict = true
+# pydantic and SQLModel resolve field annotations at runtime to build their
+# validators, so an import used only in their annotations is NOT typing-only.
+# Moving one into a TYPE_CHECKING block imports fine and then fails on first
+# use ("`Settings` is not fully defined"). Keep these evaluated at runtime.
+runtime-evaluated-base-classes = [
+    "pydantic.BaseModel",
+    "pydantic_settings.BaseSettings",
+    "sqlmodel.SQLModel",
+]
 
 [tool.ruff.lint.flake8-pytest-style]
 fixture-parentheses = false
@@ -106,7 +119,7 @@ docstring-code-format = true
 docstring-code-line-length = "dynamic"
 
 [tool.ty.environment]
-python-version = "3.13"
+python-version = "3.14"
 root = ["./src", "./tests"]
 
 [tool.ty.terminal]
@@ -159,7 +172,6 @@ timeout = 10
 timeout_method = "thread"
 required_plugins = [
     "pytest-cov",
-    "pytest-xdist",
     "pytest-randomly",
     "pytest-timeout",
 ]
@@ -167,7 +179,6 @@ required_plugins = [
 [tool.coverage.run]
 source = ["src"]
 branch = true
-parallel = true
 relative_files = true
 # Streamlit glue is exercised manually; pure logic lives in src/pbinator/strava.py.
 omit = ["src/pbinator/app.py"]
