@@ -5,7 +5,7 @@ author_email: me@jonnyoc.uk
 author_name: jedimasterjonny
 github_username: jedimasterjonny
 package_name: pbinator
-project_description: ''
+project_description: Streamlit app that signs in with Strava, tracks your running personal bests across the ten standard race distances, and reconciles your activities against Whoop and Garmin exports
 project_name: pbinator
 project_slug: pbinator
 python_version: '3.14'
