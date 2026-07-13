@@ -91,6 +91,16 @@ def test_parse_distance_to_m_keeps_metres_for_pool_swim() -> None:
     assert garmin._parse_distance_to_m("600", "Pool Swim", 4) == pytest.approx(600.0)
 
 
+def test_parse_distance_to_m_handles_thousands_separator() -> None:
+    """A pool swim of 1000 m or more arrives as "1,500", like the integer columns.
+
+    Metres is the one unit that exceeds 999, so this is the one place Distance
+    picks up a separator. Before this was handled, a single 1 km+ swim raised
+    GarminParseError and took the entire Garmin tab down with it.
+    """
+    assert garmin._parse_distance_to_m("1,500", "Pool Swim", 4) == pytest.approx(1500.0)
+
+
 def test_parse_distance_to_m_rejects_garbage() -> None:
     with pytest.raises(garmin.GarminParseError) as exc:
         garmin._parse_distance_to_m("not-a-number", "Running", 4)

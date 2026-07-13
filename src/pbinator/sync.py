@@ -183,6 +183,9 @@ class _Progress:
     inserted: int = 0
     rate_limited: bool = False
     usage: RateLimitUsage | None = None
+    # True only when the walk reached the end of the list. A pass cut short by
+    # the rate limit or an error leaves this False -- see _sync for why it matters.
+    completed: bool = False
 
 
 def _fetch_pages(
@@ -210,6 +213,7 @@ def _fetch_pages(
         usage = page_data.usage
         progress.usage = usage
         if not page_data.activities:
+            progress.completed = True  # empty page == end of the list
             return
         with store.write_transaction(ctx.session):  # one transaction per page
             for activity in page_data.activities:
@@ -267,11 +271,18 @@ def _sync(
     except httpx.HTTPError:
         error = "http_error"
     finally:
+        # Only move the watermark when the walk actually reached the end of the
+        # list. Strava returns activities NEWEST FIRST, so a pass cut short by
+        # the rate limit has stored the newest activities but not the older ones
+        # still queued behind them. Advancing to the newest anyway would make the
+        # next `after=` query skip straight past those older activities, and no
+        # amount of re-syncing would ever list them again.
+        watermark = progress.max_seen_start if progress.completed else last_start
         with store.write_transaction(session):
             store.update_cursor(
                 session,
                 athlete_id=token.athlete_id,
-                last_activity_start=progress.max_seen_start,
+                last_activity_start=watermark,
                 last_synced_at=_now_iso(),
             )
 

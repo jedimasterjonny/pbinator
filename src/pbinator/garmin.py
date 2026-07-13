@@ -74,7 +74,10 @@ def _parse_distance_to_m(value: str, activity_type: str, line_no: int) -> float:
     Raises:
         GarminParseError: if ``value`` is not a parsable float.
     """
-    raw = value.strip()
+    # Pool swims are the one case Garmin renders in metres, so they are also the
+    # one case where Distance can exceed 999 and pick up a thousands separator
+    # ("1,500") -- same formatting as the integer columns above.
+    raw = value.strip().replace(",", "")
     multiplier = 1.0 if activity_type == "Pool Swim" else 1000.0
     try:
         return round(float(raw) * multiplier, 1)

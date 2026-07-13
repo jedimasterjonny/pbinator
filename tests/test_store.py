@@ -46,7 +46,7 @@ def _summary_activity(  # noqa: PLR0913 — test helper builder
     name: str = "Morning Run",
     sport_type: str = "Run",
     start_date: str = "2024-04-15T07:00:00Z",
-    start_date_local: str = "2024-04-15T08:00:00",
+    start_date_local: str = "2024-04-15T08:00:00Z",
     distance: float = 5023.4,
     moving_time: int = 1500,
     elapsed_time: int = 1530,
@@ -256,7 +256,7 @@ def test_upsert_writes_start_date_local(session: Session) -> None:
             "name": "Run",
             "sport_type": "Run",
             "start_date": "2024-04-15T07:00:00Z",
-            "start_date_local": "2024-04-15T08:00:00",
+            "start_date_local": "2024-04-15T08:00:00Z",
             "distance": 5000.0,
             "moving_time": 1500,
             "elapsed_time": 1530,
@@ -265,7 +265,7 @@ def test_upsert_writes_start_date_local(session: Session) -> None:
     )
     session.commit()
     row = session.execute(select(Activity)).scalar_one()
-    assert row.start_date_local == "2024-04-15T08:00:00"
+    assert row.start_date_local == "2024-04-15T08:00:00Z"
 
 
 def test_make_engine_backfills_start_date_local_from_raw_json(db_path: Path) -> None:
@@ -302,7 +302,7 @@ def test_make_engine_backfills_start_date_local_from_raw_json(db_path: Path) -> 
                 1530,
                 0.0,
                 "Run",
-                '{"start_date_local":"2024-04-15T08:00:00"}',
+                '{"start_date_local":"2024-04-15T08:00:00Z"}',
                 "2024-04-15T08:00:30+00:00",
             ),
         )
@@ -314,7 +314,7 @@ def test_make_engine_backfills_start_date_local_from_raw_json(db_path: Path) -> 
     try:
         with Session(eng) as sess:
             row = sess.execute(select(Activity)).scalar_one()
-            assert row.start_date_local == "2024-04-15T08:00:00"
+            assert row.start_date_local == "2024-04-15T08:00:00Z"
     finally:
         eng.dispose()
 
@@ -332,7 +332,7 @@ def test_make_engine_does_not_overwrite_existing_start_date_local(db_path: Path)
                     "name": "Run",
                     "sport_type": "Run",
                     "start_date": "2024-04-15T07:00:00Z",
-                    "start_date_local": "2024-04-15T08:00:00",
+                    "start_date_local": "2024-04-15T08:00:00Z",
                     "distance": 5000.0,
                     "moving_time": 1500,
                     "elapsed_time": 1530,
@@ -343,7 +343,7 @@ def test_make_engine_does_not_overwrite_existing_start_date_local(db_path: Path)
             # Tamper raw_json so a re-backfill would change the stored value.
             sess.execute(
                 sa.text("UPDATE activity SET raw_json = :rj WHERE activity_id = 1"),
-                {"rj": '{"start_date_local":"1999-01-01T00:00:00"}'},
+                {"rj": '{"start_date_local":"1999-01-01T00:00:00Z"}'},
             )
             sess.commit()
     finally:
@@ -354,7 +354,7 @@ def test_make_engine_does_not_overwrite_existing_start_date_local(db_path: Path)
     try:
         with Session(eng) as sess:
             row = sess.execute(select(Activity)).scalar_one()
-            assert row.start_date_local == "2024-04-15T08:00:00"
+            assert row.start_date_local == "2024-04-15T08:00:00Z"
     finally:
         eng.dispose()
 
@@ -404,7 +404,7 @@ def test_make_engine_adds_legacy_columns(tmp_path: Path) -> None:
                 1530,
                 0.0,
                 "Run",
-                '{"start_date_local":"2024-04-15T08:00:00"}',
+                '{"start_date_local":"2024-04-15T08:00:00Z"}',
                 "2024-04-15T08:00:30+00:00",
             ),
         )
@@ -419,7 +419,7 @@ def test_make_engine_adds_legacy_columns(tmp_path: Path) -> None:
         assert "best_efforts_fetched_at" in cols
         with Session(eng) as sess:
             row = sess.execute(select(Activity)).scalar_one()
-            assert row.start_date_local == "2024-04-15T08:00:00"
+            assert row.start_date_local == "2024-04-15T08:00:00Z"
             assert row.best_efforts_fetched_at is None
     finally:
         eng.dispose()
@@ -577,7 +577,7 @@ def test_session_returns_typed_models(session: Session) -> None:
         "id": 1,
         "sport_type": "Run",
         "start_date": "2024-04-15T07:00:00Z",
-        "start_date_local": "2024-04-15T08:00:00",
+        "start_date_local": "2024-04-15T08:00:00Z",
         "distance": 5023.4,
         "moving_time": 1500,
         "elapsed_time": 1530,
@@ -619,6 +619,32 @@ def test_activities_in_range_inclusive_bounds(session: Session) -> None:
 
     ids = [a.activity_id for a in rows]
     assert ids == [1, 2, 3]
+
+
+def test_activities_in_range_local_bounds_are_inclusive(session: Session) -> None:
+    """A local row sitting exactly on the inclusive upper bound must be returned.
+
+    Strava suffixes ``start_date_local`` with a ``Z`` even though it is local.
+    Formatting the bound without one made the comparison lexical-unequal
+    ("...:06Z" <= "...:06" is False), silently dropping the boundary row --
+    which the Garmin tab then misreported as Garmin-only.
+    """
+    store.upsert_activity(
+        session,
+        athlete_id=42,
+        activity=_summary_activity(activity_id=1, start_date_local="2024-04-15T08:00:00Z"),
+    )
+    session.commit()
+
+    rows = store.activities_in_range(
+        session,
+        athlete_id=42,
+        start=datetime(2024, 4, 15, 8, 0, 0),  # noqa: DTZ001 — naive local by design
+        end=datetime(2024, 4, 15, 8, 0, 0),  # noqa: DTZ001 — exactly on the row
+        field="start_date_local",
+    )
+
+    assert [a.activity_id for a in rows] == [1]
 
 
 def test_activities_in_range_excludes_outside_window(session: Session) -> None:
