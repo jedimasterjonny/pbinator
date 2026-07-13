@@ -10,7 +10,6 @@ from sqlmodel import select
 from pbinator import store
 from pbinator.activities_api import RateLimitUsage
 from pbinator.models import Activity
-from pbinator.settings import Settings
 from pbinator.strava import TokenPayload
 from pbinator.sync import SyncResult, full_rescan, max_iso, run, would_exceed_next_call
 
@@ -87,13 +86,6 @@ _ACTIVITIES_URL = "https://www.strava.com/api/v3/athlete/activities"
 _DETAIL_URL = "https://www.strava.com/api/v3/activities/{}"
 
 
-def _settings(tmp_path_str: str, monkeypatch: pytest.MonkeyPatch) -> Settings:
-    monkeypatch.setenv("STRAVA_CLIENT_ID", "client-1")
-    monkeypatch.setenv("STRAVA_CLIENT_SECRET", "secret-1")
-    monkeypatch.setenv("PBINATOR_DB_PATH", tmp_path_str)
-    return Settings()
-
-
 def _token() -> TokenPayload:
     return TokenPayload(
         access_token="acc-1",  # noqa: S106 — fixture, not a credential
@@ -129,10 +121,7 @@ def _ok_headers(short_used: int = 5, daily_used: int = 100) -> dict[str, str]:
 
 
 @respx.mock
-def test_run_cold_start_paginates_until_empty(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_run_cold_start_paginates_until_empty(session: Session) -> None:
     page1 = [_activity(1, "2024-04-15T07:00:00Z"), _activity(2, "2024-04-16T07:00:00Z")]
     page2 = [_activity(3, "2024-04-17T07:00:00Z")]
     respx.get(_ACTIVITIES_URL).mock(
@@ -147,7 +136,7 @@ def test_run_cold_start_paginates_until_empty(
             return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
         )
 
-    result = run(_token(), settings, session)
+    result = run(_token(), session)
     session.expire_all()
     cursor = store.get_cursor(session, athlete_id=42)
     count = store.count_activities(session, athlete_id=42)
@@ -164,10 +153,7 @@ def test_run_cold_start_paginates_until_empty(
 
 
 @respx.mock
-def test_run_warm_start_passes_after_epoch_from_cursor(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_run_warm_start_passes_after_epoch_from_cursor(session: Session) -> None:
     with store.write_transaction(session):
         store.update_cursor(
             session,
@@ -180,7 +166,7 @@ def test_run_warm_start_passes_after_epoch_from_cursor(
         return_value=httpx.Response(200, headers=_ok_headers(), json=[])
     )
 
-    result = run(_token(), settings, session)
+    result = run(_token(), session)
 
     assert result.inserted_or_updated == 0
     assert result.pages_fetched == 1
@@ -190,10 +176,7 @@ def test_run_warm_start_passes_after_epoch_from_cursor(
 
 
 @respx.mock
-def test_run_breaks_when_rate_limit_preflight_trips(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_run_breaks_when_rate_limit_preflight_trips(session: Session) -> None:
     page1 = [_activity(1, "2024-04-15T07:00:00Z")]
     page2 = [_activity(2, "2024-04-16T07:00:00Z")]
     respx.get(_ACTIVITIES_URL).mock(
@@ -211,7 +194,7 @@ def test_run_breaks_when_rate_limit_preflight_trips(
         )
     )
 
-    result = run(_token(), settings, session)
+    result = run(_token(), session)
     session.expire_all()
     cursor = store.get_cursor(session, athlete_id=42)
 
@@ -223,15 +206,12 @@ def test_run_breaks_when_rate_limit_preflight_trips(
 
 
 @respx.mock
-def test_run_returns_auth_failed_on_401(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_run_returns_auth_failed_on_401(session: Session) -> None:
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(401, headers=_ok_headers(), json={})
     )
 
-    result = run(_token(), settings, session)
+    result = run(_token(), session)
     session.expire_all()
     cursor = store.get_cursor(session, athlete_id=42)
 
@@ -243,24 +223,18 @@ def test_run_returns_auth_failed_on_401(
 
 
 @respx.mock
-def test_run_returns_http_error_on_5xx(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_run_returns_http_error_on_5xx(session: Session) -> None:
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(500, headers=_ok_headers(), json={})
     )
 
-    result = run(_token(), settings, session)
+    result = run(_token(), session)
     assert result.error == "http_error"
     assert result.rate_limited is False
 
 
 @respx.mock
-def test_run_returns_rate_limited_on_429(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_run_returns_rate_limited_on_429(session: Session) -> None:
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(
             429,
@@ -272,16 +246,13 @@ def test_run_returns_rate_limited_on_429(
         )
     )
 
-    result = run(_token(), settings, session)
+    result = run(_token(), session)
     assert result.rate_limited is True
     assert result.error is None
 
 
 @respx.mock
-def test_run_progress_callback_invoked_per_page(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_run_progress_callback_invoked_per_page(session: Session) -> None:
     respx.get(_ACTIVITIES_URL).mock(
         side_effect=[
             httpx.Response(200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]),
@@ -293,16 +264,13 @@ def test_run_progress_callback_invoked_per_page(
     )
     seen: list[tuple[int, int]] = []
 
-    run(_token(), settings, session, on_page=lambda p, n: seen.append((p, n)))
+    run(_token(), session, on_page=lambda p, n: seen.append((p, n)))
 
     assert seen == [(1, 1)]
 
 
 @respx.mock
-def test_full_rescan_clean_run_reconciles_deletions(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_full_rescan_clean_run_reconciles_deletions(session: Session) -> None:
     with store.write_transaction(session):
         for activity_id in (1, 2, 3, 99):
             store.upsert_activity(
@@ -335,7 +303,7 @@ def test_full_rescan_clean_run_reconciles_deletions(
             return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
         )
 
-    result = full_rescan(_token(), settings, session)
+    result = full_rescan(_token(), session)
     session.expire_all()
     remaining_42 = {
         row.activity_id
@@ -353,10 +321,7 @@ def test_full_rescan_clean_run_reconciles_deletions(
 
 
 @respx.mock
-def test_full_rescan_truncated_does_not_reconcile(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_full_rescan_truncated_does_not_reconcile(session: Session) -> None:
     with store.write_transaction(session):
         for activity_id in (1, 2, 3, 99):
             store.upsert_activity(
@@ -373,7 +338,7 @@ def test_full_rescan_truncated_does_not_reconcile(
         )
     )
 
-    result = full_rescan(_token(), settings, session)
+    result = full_rescan(_token(), session)
     session.expire_all()
     count = store.count_activities(session, athlete_id=42)
 
@@ -383,10 +348,7 @@ def test_full_rescan_truncated_does_not_reconcile(
 
 
 @respx.mock
-def test_full_rescan_empty_first_page_does_not_wipe_db(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_full_rescan_empty_first_page_does_not_wipe_db(session: Session) -> None:
     with store.write_transaction(session):
         store.upsert_activity(
             session,
@@ -404,7 +366,7 @@ def test_full_rescan_empty_first_page_does_not_wipe_db(
         return_value=httpx.Response(200, headers=_ok_headers(), json=[])
     )
 
-    result = full_rescan(_token(), settings, session)
+    result = full_rescan(_token(), session)
     session.expire_all()
     count = store.count_activities(session, athlete_id=42)
     cursor = store.get_cursor(session, athlete_id=42)
@@ -418,10 +380,7 @@ def test_full_rescan_empty_first_page_does_not_wipe_db(
 
 
 @respx.mock
-def test_full_rescan_error_does_not_reconcile(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_full_rescan_error_does_not_reconcile(session: Session) -> None:
     with store.write_transaction(session):
         store.upsert_activity(
             session,
@@ -439,7 +398,7 @@ def test_full_rescan_error_does_not_reconcile(
         return_value=httpx.Response(500, headers=_ok_headers(), json={})
     )
 
-    result = full_rescan(_token(), settings, session)
+    result = full_rescan(_token(), session)
     session.expire_all()
     count = store.count_activities(session, athlete_id=42)
     cursor = store.get_cursor(session, athlete_id=42)
@@ -452,10 +411,7 @@ def test_full_rescan_error_does_not_reconcile(
 
 
 @respx.mock
-def test_full_rescan_auth_error_does_not_reconcile(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_full_rescan_auth_error_does_not_reconcile(session: Session) -> None:
     with store.write_transaction(session):
         store.upsert_activity(
             session,
@@ -473,7 +429,7 @@ def test_full_rescan_auth_error_does_not_reconcile(
         return_value=httpx.Response(401, headers=_ok_headers(), json={})
     )
 
-    result = full_rescan(_token(), settings, session)
+    result = full_rescan(_token(), session)
     session.expire_all()
     count = store.count_activities(session, athlete_id=42)
     cursor = store.get_cursor(session, athlete_id=42)
@@ -486,10 +442,7 @@ def test_full_rescan_auth_error_does_not_reconcile(
 
 
 @respx.mock
-def test_full_rescan_rate_limited_429_does_not_reconcile(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_full_rescan_rate_limited_429_does_not_reconcile(session: Session) -> None:
     with store.write_transaction(session):
         for activity_id in (1, 2):
             store.upsert_activity(
@@ -515,7 +468,7 @@ def test_full_rescan_rate_limited_429_does_not_reconcile(
         )
     )
 
-    result = full_rescan(_token(), settings, session)
+    result = full_rescan(_token(), session)
     session.expire_all()
     count = store.count_activities(session, athlete_id=42)
     cursor = store.get_cursor(session, athlete_id=42)
@@ -529,10 +482,7 @@ def test_full_rescan_rate_limited_429_does_not_reconcile(
 
 
 @respx.mock
-def test_full_rescan_progress_callback_invoked_per_page(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_full_rescan_progress_callback_invoked_per_page(session: Session) -> None:
     respx.get(_ACTIVITIES_URL).mock(
         side_effect=[
             httpx.Response(
@@ -548,16 +498,13 @@ def test_full_rescan_progress_callback_invoked_per_page(
     )
     seen: list[tuple[int, int]] = []
 
-    full_rescan(_token(), settings, session, on_page=lambda p, n: seen.append((p, n)))
+    full_rescan(_token(), session, on_page=lambda p, n: seen.append((p, n)))
 
     assert seen == [(1, 1)]
 
 
 @respx.mock
-def test_run_fetches_best_efforts_for_each_run(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_run_fetches_best_efforts_for_each_run(session: Session) -> None:
     page1 = [_activity(1, "2024-04-15T07:00:00Z"), _activity(2, "2024-04-16T07:00:00Z")]
     respx.get(_ACTIVITIES_URL).mock(
         side_effect=[
@@ -584,7 +531,7 @@ def test_run_fetches_best_efforts_for_each_run(
         return_value=httpx.Response(200, headers=_ok_headers(), json={"id": 2, "best_efforts": []})
     )
 
-    result = run(_token(), settings, session)
+    result = run(_token(), session)
     session.expire_all()
     activities = session.execute(select(Activity).order_by("activity_id")).scalars().all()
 
@@ -596,10 +543,7 @@ def test_run_fetches_best_efforts_for_each_run(
 
 
 @respx.mock
-def test_run_skips_detail_fetch_for_non_run_sport_types(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_run_skips_detail_fetch_for_non_run_sport_types(session: Session) -> None:
     ride = _activity(1, "2024-04-15T07:00:00Z")
     ride["sport_type"] = "Ride"
     respx.get(_ACTIVITIES_URL).mock(
@@ -612,7 +556,7 @@ def test_run_skips_detail_fetch_for_non_run_sport_types(
         return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
     )
 
-    run(_token(), settings, session)
+    run(_token(), session)
     session.expire_all()
     row = session.execute(select(Activity)).scalar_one()
 
@@ -621,10 +565,7 @@ def test_run_skips_detail_fetch_for_non_run_sport_types(
 
 
 @respx.mock
-def test_run_skips_detail_fetch_for_already_fetched_runs(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_run_skips_detail_fetch_for_already_fetched_runs(session: Session) -> None:
     with store.write_transaction(session):
         store.upsert_activity(session, athlete_id=42, activity=_activity(1, "2024-04-15T07:00:00Z"))
         store.mark_detail_fetched(
@@ -641,16 +582,13 @@ def test_run_skips_detail_fetch_for_already_fetched_runs(
         return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
     )
 
-    run(_token(), settings, session)
+    run(_token(), session)
 
     assert detail_route.called is False
 
 
 @respx.mock
-def test_run_returns_auth_failed_when_detail_fetch_returns_401(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_run_returns_auth_failed_when_detail_fetch_returns_401(session: Session) -> None:
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(
             200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]
@@ -660,15 +598,12 @@ def test_run_returns_auth_failed_when_detail_fetch_returns_401(
         return_value=httpx.Response(401, headers=_ok_headers(), json={})
     )
 
-    result = run(_token(), settings, session)
+    result = run(_token(), session)
     assert result.error == "auth_failed"
 
 
 @respx.mock
-def test_run_returns_http_error_when_detail_fetch_returns_5xx(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_run_returns_http_error_when_detail_fetch_returns_5xx(session: Session) -> None:
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(
             200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]
@@ -678,15 +613,12 @@ def test_run_returns_http_error_when_detail_fetch_returns_5xx(
         return_value=httpx.Response(500, headers=_ok_headers(), json={})
     )
 
-    result = run(_token(), settings, session)
+    result = run(_token(), session)
     assert result.error == "http_error"
 
 
 @respx.mock
-def test_run_stops_when_detail_fetch_would_exceed_rate_limit(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_run_stops_when_detail_fetch_would_exceed_rate_limit(session: Session) -> None:
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(
             200,
@@ -705,7 +637,7 @@ def test_run_stops_when_detail_fetch_would_exceed_rate_limit(
         return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
     )
 
-    result = run(_token(), settings, session)
+    result = run(_token(), session)
     session.expire_all()
     activities = session.execute(select(Activity).order_by("activity_id")).scalars().all()
 
@@ -717,10 +649,7 @@ def test_run_stops_when_detail_fetch_would_exceed_rate_limit(
 
 
 @respx.mock
-def test_run_rate_limited_429_on_detail_fetch_returns_rate_limited(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_run_rate_limited_429_on_detail_fetch_returns_rate_limited(session: Session) -> None:
     respx.get(_ACTIVITIES_URL).mock(
         return_value=httpx.Response(
             200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]
@@ -737,7 +666,7 @@ def test_run_rate_limited_429_on_detail_fetch_returns_rate_limited(
         )
     )
 
-    result = run(_token(), settings, session)
+    result = run(_token(), session)
     session.expire_all()
     row = session.execute(select(Activity)).scalar_one()
 
@@ -746,10 +675,7 @@ def test_run_rate_limited_429_on_detail_fetch_returns_rate_limited(
 
 
 @respx.mock
-def test_full_rescan_also_fetches_best_efforts(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
+def test_full_rescan_also_fetches_best_efforts(session: Session) -> None:
     respx.get(_ACTIVITIES_URL).mock(
         side_effect=[
             httpx.Response(200, headers=_ok_headers(), json=[_activity(1, "2024-04-15T07:00:00Z")]),
@@ -760,18 +686,15 @@ def test_full_rescan_also_fetches_best_efforts(
         return_value=httpx.Response(200, headers=_ok_headers(), json={"best_efforts": []})
     )
 
-    result = full_rescan(_token(), settings, session)
+    result = full_rescan(_token(), session)
 
     assert detail.called is True
     assert result.error is None
 
 
 @respx.mock
-def test_run_rate_limited_after_detail_exhausts_budget(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
+def test_run_rate_limited_after_detail_exhausts_budget(session: Session) -> None:
     """Detail fetch drains the budget; post-helper would_exceed_next_call trips."""
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     respx.get(_ACTIVITIES_URL).mock(
         side_effect=[
             httpx.Response(
@@ -790,18 +713,15 @@ def test_run_rate_limited_after_detail_exhausts_budget(
         )
     )
 
-    result = run(_token(), settings, session)
+    result = run(_token(), session)
 
     assert result.rate_limited is True
     assert result.error is None
 
 
 @respx.mock
-def test_full_rescan_rate_limited_after_detail_exhausts_budget(
-    session: Session, monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
-) -> None:
+def test_full_rescan_rate_limited_after_detail_exhausts_budget(session: Session) -> None:
     """Detail fetch drains the budget; post-helper would_exceed_next_call trips."""
-    settings = _settings(str(tmp_path_factory.mktemp("ignored") / "ignored.db"), monkeypatch)
     respx.get(_ACTIVITIES_URL).mock(
         side_effect=[
             httpx.Response(
@@ -820,7 +740,7 @@ def test_full_rescan_rate_limited_after_detail_exhausts_budget(
         )
     )
 
-    result = full_rescan(_token(), settings, session)
+    result = full_rescan(_token(), session)
 
     assert result.rate_limited is True
     assert result.error is None

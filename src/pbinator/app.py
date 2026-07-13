@@ -175,7 +175,6 @@ def _render_sync_result(
 
 def _run_sync_with_status(
     token: TokenPayload,
-    settings: Settings,
     session: Session,
     *,
     full: bool,
@@ -190,9 +189,9 @@ def _run_sync_with_status(
             status.write(f"Page {page_number} — {count} activities")
 
         if full:
-            result = sync.full_rescan(token, settings, session, on_page=on_page)
+            result = sync.full_rescan(token, session, on_page=on_page)
         else:
-            result = sync.run(token, settings, session, on_page=on_page)
+            result = sync.run(token, session, on_page=on_page)
         if pages_seen == 0 and result.error is None and not result.rate_limited:
             status.write("No new activities.")
         status.update(state="complete")
@@ -218,7 +217,6 @@ def _render_logged_out(settings: Settings, controller: CookieController) -> None
 
 def _render_sync_tab(
     token: TokenPayload,
-    settings: Settings,
     session: Session,
     controller: CookieController,
 ) -> None:
@@ -241,7 +239,7 @@ def _render_sync_tab(
         # block and result message before the user can read them. The
         # count display at the top is stale until the next interaction;
         # that's an acceptable trade-off for v1.
-        result = _run_sync_with_status(token, settings, session, full=clicked_rescan)
+        result = _run_sync_with_status(token, session, full=clicked_rescan)
         _render_sync_result(result, controller, session, token.athlete_id)
         if result.error == "auth_failed":
             st.rerun()
@@ -509,7 +507,7 @@ def _render_logged_in(
     with Session(engine) as session:
         tab_sync, tab_pbs, tab_whoop, tab_garmin = st.tabs(["Sync", "PBs", "Whoop", "Garmin"])
         with tab_sync:
-            _render_sync_tab(token, settings, session, controller)
+            _render_sync_tab(token, session, controller)
         with tab_pbs:
             _render_pbs_tab(session, token.athlete_id)
         with tab_whoop:
