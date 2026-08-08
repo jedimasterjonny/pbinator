@@ -111,7 +111,7 @@ def _format_resume_message(usage: RateLimitUsage | None) -> str:
     if usage is not None and usage.daily_used + 1 + margin > usage.daily_limit:
         return "Try again after midnight UTC."
     minute = (now.minute // 15 + 1) * 15
-    if minute >= 60:  # noqa: PLR2004 — minutes-per-hour boundary
+    if minute >= 60:  # ruff: ignore[magic-value-comparison] — minutes-per-hour boundary
         next_reset = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
     else:
         next_reset = now.replace(minute=minute, second=0, microsecond=0)

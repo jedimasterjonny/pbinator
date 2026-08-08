@@ -88,7 +88,7 @@ def _parse_distance_to_m(value: str, activity_type: str, line_no: int) -> float:
 
 def _parse_date(value: str, line_no: int) -> datetime:
     try:
-        return datetime.strptime(value, _DATE_FMT)  # noqa: DTZ007 — Garmin Date is naive local by design
+        return datetime.strptime(value, _DATE_FMT)  # ruff: ignore[call-datetime-strptime-without-zone] — Garmin Date is naive local by design
     except ValueError as exc:
         msg = f"unparsable Date: {value!r}"
         raise GarminParseError(line_no, msg) from exc

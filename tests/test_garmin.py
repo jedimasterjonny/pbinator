@@ -109,7 +109,7 @@ def test_parse_distance_to_m_rejects_garbage() -> None:
 
 def test_parse_date_returns_naive_datetime() -> None:
     parsed = garmin._parse_date("2026-05-02 13:18:06", 4)
-    assert parsed == datetime(2026, 5, 2, 13, 18, 6)  # noqa: DTZ001 — naive by design
+    assert parsed == datetime(2026, 5, 2, 13, 18, 6)  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
     assert parsed.tzinfo is None
 
 
@@ -131,7 +131,7 @@ _HEADER = (
 )
 
 
-def _row(  # noqa: PLR0913 — test helper builder
+def _row(  # ruff: ignore[too-many-arguments] — test helper builder
     *,
     activity_type: str = "Running",
     date: str = "2026-05-02 13:18:06",
@@ -192,7 +192,7 @@ def test_parse_one_row_populates_dataclass() -> None:
     assert len(rows) == 1
     g = rows[0]
     assert g.activity_type == "Running"
-    assert g.start_local == datetime(2026, 5, 2, 13, 18, 6)  # noqa: DTZ001 — naive by design
+    assert g.start_local == datetime(2026, 5, 2, 13, 18, 6)  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
     assert g.start_local.tzinfo is None
     assert g.title == "Easy Run - 9km"
     assert g.distance_m == pytest.approx(9010.0)

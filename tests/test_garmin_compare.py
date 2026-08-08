@@ -9,7 +9,7 @@ from pbinator.garmin import GarminActivity
 from pbinator.models import Activity
 
 
-def _g(  # noqa: PLR0913 — test helper builder
+def _g(  # ruff: ignore[too-many-arguments] — test helper builder
     *,
     activity_type: str = "Running",
     start_local: datetime | None = None,
@@ -22,7 +22,7 @@ def _g(  # noqa: PLR0913 — test helper builder
 ) -> GarminActivity:
     return GarminActivity(
         activity_type=activity_type,
-        start_local=start_local or datetime(2026, 5, 2, 13, 18, 6),  # noqa: DTZ001 — naive by design
+        start_local=start_local or datetime(2026, 5, 2, 13, 18, 6),  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
         title=title,
         distance_m=distance_m,
         moving_time_s=moving_time_s,
@@ -107,7 +107,7 @@ def test_field_rules_start_local_returns_none_when_strava_local_missing() -> Non
     assert rule.strava_get(s, {}) is None
 
 
-def _strava(  # noqa: PLR0913 — test helper builder
+def _strava(  # ruff: ignore[too-many-arguments] — test helper builder
     *,
     activity_id: int = 100,
     sport_type: str = "Run",
@@ -196,12 +196,12 @@ def test_compare_strava_random_prefix_is_not_treated_as_default() -> None:
 
 def test_compare_elapsed_time_default_tolerance_is_5s() -> None:
     """Outside September, |Δ elapsed| <= 5 doesn't flag, > 5 does."""
-    g_in = _g(start_local=datetime(2026, 8, 1, 12, 0, 0), elapsed_time_s=3000)  # noqa: DTZ001 — naive by design
+    g_in = _g(start_local=datetime(2026, 8, 1, 12, 0, 0), elapsed_time_s=3000)  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
     s_in = _strava(elapsed_time_s=2995, start_date_local="2026-08-01T12:00:00")
     result_in = garmin_compare.compare(garmin=[g_in], strava=[s_in])
     assert all(m.field != "elapsed_time_s" for m in result_in.mismatches)
 
-    g_out = _g(start_local=datetime(2026, 8, 1, 12, 0, 0), elapsed_time_s=3006)  # noqa: DTZ001 — naive by design
+    g_out = _g(start_local=datetime(2026, 8, 1, 12, 0, 0), elapsed_time_s=3006)  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
     s_out = _strava(elapsed_time_s=3000, start_date_local="2026-08-01T12:00:00")
     result_out = garmin_compare.compare(garmin=[g_out], strava=[s_out])
     elapsed = [m for m in result_out.mismatches if m.field == "elapsed_time_s"]
@@ -210,12 +210,12 @@ def test_compare_elapsed_time_default_tolerance_is_5s() -> None:
 
 def test_compare_elapsed_time_september_tolerance_is_25s() -> None:
     """In September the rule absorbs the known platform-side trim drift."""
-    g_in = _g(start_local=datetime(2025, 9, 15, 8, 0, 0), elapsed_time_s=3020)  # noqa: DTZ001 — naive by design
+    g_in = _g(start_local=datetime(2025, 9, 15, 8, 0, 0), elapsed_time_s=3020)  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
     s_in = _strava(elapsed_time_s=3000, start_date_local="2025-09-15T08:00:00")
     result_in = garmin_compare.compare(garmin=[g_in], strava=[s_in])
     assert all(m.field != "elapsed_time_s" for m in result_in.mismatches)
 
-    g_out = _g(start_local=datetime(2025, 9, 15, 8, 0, 0), elapsed_time_s=3030)  # noqa: DTZ001 — naive by design
+    g_out = _g(start_local=datetime(2025, 9, 15, 8, 0, 0), elapsed_time_s=3030)  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
     s_out = _strava(elapsed_time_s=3000, start_date_local="2025-09-15T08:00:00")
     result_out = garmin_compare.compare(garmin=[g_out], strava=[s_out])
     elapsed = [m for m in result_out.mismatches if m.field == "elapsed_time_s"]
@@ -285,7 +285,7 @@ def test_compare_distance_beyond_tolerance_flags() -> None:
 
 def test_compare_start_local_within_tolerance_no_flag() -> None:
     # Δ = 2s, within tolerance.
-    g = _g(start_local=datetime(2026, 5, 2, 13, 18, 6))  # noqa: DTZ001 — naive by design
+    g = _g(start_local=datetime(2026, 5, 2, 13, 18, 6))  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
     s = _strava(start_date_local="2026-05-02T13:18:08")
     result = garmin_compare.compare(garmin=[g], strava=[s])
     assert all(m.field != "start_local" for m in result.mismatches)
@@ -293,7 +293,7 @@ def test_compare_start_local_within_tolerance_no_flag() -> None:
 
 def test_compare_start_local_beyond_tolerance_flags() -> None:
     # Δ = 5s: pairs (within ±60s window) but flags (beyond ±2s field tolerance).
-    g = _g(start_local=datetime(2026, 5, 2, 13, 18, 6))  # noqa: DTZ001 — naive by design
+    g = _g(start_local=datetime(2026, 5, 2, 13, 18, 6))  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
     s = _strava(start_date_local="2026-05-02T13:18:11")
     result = garmin_compare.compare(garmin=[g], strava=[s])
     start_mismatches = [m for m in result.mismatches if m.field == "start_local"]
@@ -333,7 +333,7 @@ def test_compare_sport_mapping_mobility_walk_flags() -> None:
 
 
 def test_compare_no_strava_pair_emits_garmin_only() -> None:
-    g = _g(start_local=datetime(2026, 5, 2, 13, 0, 0))  # noqa: DTZ001 — naive by design
+    g = _g(start_local=datetime(2026, 5, 2, 13, 0, 0))  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
     s = _strava(start_date_local="2026-05-02T15:00:00")  # 2 hours later
     result = garmin_compare.compare(garmin=[g], strava=[s])
     assert len(result.garmin_only) == 1
@@ -343,8 +343,8 @@ def test_compare_no_strava_pair_emits_garmin_only() -> None:
 def test_compare_picks_closer_of_two_candidates() -> None:
     # Garmin window spans 13:00:00 → 13:01:00 so both Strava candidates fall inside
     # the date-range guard for Strava-only emission.
-    g_first = _g(start_local=datetime(2026, 5, 2, 13, 0, 0))  # noqa: DTZ001 — naive by design
-    g_last = _g(start_local=datetime(2026, 5, 2, 13, 1, 0))  # noqa: DTZ001 — naive by design
+    g_first = _g(start_local=datetime(2026, 5, 2, 13, 0, 0))  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
+    g_last = _g(start_local=datetime(2026, 5, 2, 13, 1, 0))  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
     s_close = _strava(
         activity_id=1, start_date_local="2026-05-02T13:00:10", name="A"
     )  # +10s from g_first
@@ -362,7 +362,7 @@ def test_compare_picks_closer_of_two_candidates() -> None:
 
 
 def test_compare_tie_break_lower_activity_id_wins() -> None:
-    g = _g(start_local=datetime(2026, 5, 2, 13, 0, 0), title="G")  # noqa: DTZ001 — naive by design
+    g = _g(start_local=datetime(2026, 5, 2, 13, 0, 0), title="G")  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
     s_lo = _strava(activity_id=1, start_date_local="2026-05-02T13:00:10", name="A")
     s_hi = _strava(activity_id=2, start_date_local="2026-05-02T13:00:10", name="B")  # exact tie
     result = garmin_compare.compare(garmin=[g], strava=[s_lo, s_hi])
@@ -373,8 +373,8 @@ def test_compare_tie_break_lower_activity_id_wins() -> None:
 
 
 def test_compare_strava_in_range_unpaired_emits_strava_only() -> None:
-    g_first = _g(start_local=datetime(2026, 5, 1, 12, 0, 0))  # noqa: DTZ001 — naive by design
-    g_last = _g(start_local=datetime(2026, 5, 2, 13, 18, 6))  # noqa: DTZ001 — naive by design
+    g_first = _g(start_local=datetime(2026, 5, 1, 12, 0, 0))  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
+    g_last = _g(start_local=datetime(2026, 5, 2, 13, 18, 6))  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
     s_paired = _strava(activity_id=1, start_date_local="2026-05-02T13:18:06")
     s_unpaired = _strava(activity_id=2, start_date_local="2026-05-01T18:00:00")
     result = garmin_compare.compare(garmin=[g_first, g_last], strava=[s_paired, s_unpaired])
@@ -383,7 +383,7 @@ def test_compare_strava_in_range_unpaired_emits_strava_only() -> None:
 
 
 def test_compare_strava_outside_range_not_emitted() -> None:
-    g = _g(start_local=datetime(2026, 5, 2, 13, 18, 6))  # noqa: DTZ001 — naive by design
+    g = _g(start_local=datetime(2026, 5, 2, 13, 18, 6))  # ruff: ignore[call-datetime-without-tzinfo] — naive by design
     s_in = _strava(activity_id=1, start_date_local="2026-05-02T13:18:06")
     s_out = _strava(activity_id=2, start_date_local="2025-01-01T00:00:00")
     result = garmin_compare.compare(garmin=[g], strava=[s_in, s_out])

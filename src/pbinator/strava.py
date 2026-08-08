@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from pbinator.settings import Settings
 
 _AUTHORIZE_URL = "https://www.strava.com/oauth/authorize"
-_TOKEN_URL = "https://www.strava.com/oauth/token"  # noqa: S105 — OAuth endpoint URL, not a credential
+_TOKEN_URL = "https://www.strava.com/oauth/token"  # ruff: ignore[hardcoded-password-string] — OAuth endpoint URL, not a credential
 _REQUEST_TIMEOUT_SECONDS = 10.0
 
 

@@ -59,20 +59,20 @@ respect-gitignore = true
 preview = true
 select = ["ALL"]
 ignore = [
-    "COM812",
-    "ISC001",
-    "D100",
-    "D101",
-    "D102",
-    "D103",
-    "D104",
-    "D105",
-    "D106",
-    "D107",
-    "CPY001",
-    "FIX002",
-    "TD002",
-    "TD003",
+    "missing-trailing-comma",
+    "single-line-implicit-string-concatenation",
+    "undocumented-public-module",
+    "undocumented-public-class",
+    "undocumented-public-method",
+    "undocumented-public-function",
+    "undocumented-public-package",
+    "undocumented-magic-method",
+    "undocumented-public-nested-class",
+    "undocumented-public-init",
+    "missing-copyright-notice",
+    "line-contains-todo",
+    "missing-todo-author",
+    "missing-todo-link",
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -81,7 +81,7 @@ ignore = [
 # moved into a TYPE_CHECKING block fails collection with "unsupported
 # callable". Test modules are never imported by the app, so the rules buy
 # nothing here anyway.
-"tests/**/*.py" = ["S101", "PLR2004", "SLF001", "ANN", "D", "TC"]
+"tests/**/*.py" = ["assert", "magic-value-comparison", "private-member-access", "ANN", "D", "TC"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["pbinator"]

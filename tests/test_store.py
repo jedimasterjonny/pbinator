@@ -40,7 +40,7 @@ def test_make_engine_creates_parent_directory(tmp_path: Path) -> None:
         eng.dispose()
 
 
-def _summary_activity(  # noqa: PLR0913 — test helper builder
+def _summary_activity(  # ruff: ignore[too-many-arguments] — test helper builder
     *,
     activity_id: int = 100,
     name: str = "Morning Run",
@@ -639,8 +639,8 @@ def test_activities_in_range_local_bounds_are_inclusive(session: Session) -> Non
     rows = store.activities_in_range(
         session,
         athlete_id=42,
-        start=datetime(2024, 4, 15, 8, 0, 0),  # noqa: DTZ001 — naive local by design
-        end=datetime(2024, 4, 15, 8, 0, 0),  # noqa: DTZ001 — exactly on the row
+        start=datetime(2024, 4, 15, 8, 0, 0),  # ruff: ignore[call-datetime-without-tzinfo] — naive local by design
+        end=datetime(2024, 4, 15, 8, 0, 0),  # ruff: ignore[call-datetime-without-tzinfo] — exactly on the row
         field="start_date_local",
     )
 
@@ -745,8 +745,8 @@ def test_activities_in_range_filters_by_start_date_local(session: Session) -> No
     rows = store.activities_in_range(
         session,
         athlete_id=42,
-        start=datetime(2024, 4, 15, 8, 30, 0),  # naive (local)  # noqa: DTZ001
-        end=datetime(2024, 4, 15, 9, 30, 0),  # naive (local)  # noqa: DTZ001
+        start=datetime(2024, 4, 15, 8, 30, 0),  # ruff: ignore[call-datetime-without-tzinfo] — naive (local)
+        end=datetime(2024, 4, 15, 9, 30, 0),  # ruff: ignore[call-datetime-without-tzinfo] — naive (local)
         field="start_date_local",
     )
 
@@ -797,8 +797,8 @@ def test_activities_in_range_orders_by_start_date_local(session: Session) -> Non
     rows = store.activities_in_range(
         session,
         athlete_id=42,
-        start=datetime(2024, 4, 15, 8, 0, 0),  # noqa: DTZ001
-        end=datetime(2024, 4, 15, 12, 0, 0),  # noqa: DTZ001
+        start=datetime(2024, 4, 15, 8, 0, 0),  # ruff: ignore[call-datetime-without-tzinfo]
+        end=datetime(2024, 4, 15, 12, 0, 0),  # ruff: ignore[call-datetime-without-tzinfo]
         field="start_date_local",
     )
 
