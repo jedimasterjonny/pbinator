@@ -60,7 +60,7 @@ def _parse_offset(tz_str: str, line_no: int) -> timezone:
         return UTC
     hours = int(match.group(3))
     minutes = int(match.group(4))
-    if hours >= 24 or minutes >= 60:  # noqa: PLR2004 — inline calendar bounds
+    if hours >= 24 or minutes >= 60:  # ruff: ignore[magic-value-comparison] — inline calendar bounds
         msg = f"unparsable timezone: {tz_str!r}"
         raise WhoopParseError(line_no, msg)
     sign = 1 if match.group(2) == "+" else -1
@@ -69,7 +69,7 @@ def _parse_offset(tz_str: str, line_no: int) -> timezone:
 
 def _parse_local_dt(value: str, tz: timezone, field: str, line_no: int) -> datetime:
     try:
-        naive = datetime.strptime(value, _TS_FMT)  # noqa: DTZ007 — offset attached on next line
+        naive = datetime.strptime(value, _TS_FMT)  # ruff: ignore[call-datetime-strptime-without-zone] — offset attached on next line
     except ValueError as exc:
         msg = f"unparsable {field}: {value!r}"
         raise WhoopParseError(line_no, msg) from exc

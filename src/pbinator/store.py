@@ -17,7 +17,7 @@ from sqlalchemy import event, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import SQLModel, create_engine, select
 
-from pbinator import models  # noqa: F401 — registers tables on SQLModel.metadata
+from pbinator import models  # ruff: ignore[unused-import] — registers tables on SQLModel.metadata
 from pbinator.models import Activity, BestEffort, SyncCursor
 
 if TYPE_CHECKING:
@@ -89,7 +89,7 @@ def make_engine(path: Path) -> Engine:
     @event.listens_for(engine, "connect")
     def _set_pragmas(
         dbapi_connection: sqlite3.Connection,
-        _connection_record: Any,  # noqa: ANN401 — opaque pool record from SQLAlchemy
+        _connection_record: Any,  # ruff: ignore[any-type] — opaque pool record from SQLAlchemy
     ) -> None:
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA journal_mode=WAL")

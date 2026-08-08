@@ -33,8 +33,8 @@ def _strava_token_response() -> dict[str, object]:
 def test_token_payload_parses_strava_response() -> None:
     payload = TokenPayload.from_strava_response(_strava_token_response())
 
-    assert payload.access_token == "access-abc"  # noqa: S105 — fixture value, not a real credential
-    assert payload.refresh_token == "refresh-xyz"  # noqa: S105 — fixture value, not a real credential
+    assert payload.access_token == "access-abc"  # ruff: ignore[hardcoded-password-string] — fixture value, not a real credential
+    assert payload.refresh_token == "refresh-xyz"  # ruff: ignore[hardcoded-password-string] — fixture value, not a real credential
     assert payload.expires_at == 1735689600
     assert payload.athlete_id == 12345
     assert payload.athlete_first_name == "Jane"
@@ -97,11 +97,11 @@ def test_exchange_code_returns_token_payload(monkeypatch: pytest.MonkeyPatch) ->
     sent = route.calls.last.request
     body = dict(httpx.QueryParams(sent.content.decode()))
     assert body["client_id"] == "client-123"
-    assert body["client_secret"] == "secret-xyz"  # noqa: S105 — fixture value, not a real credential
+    assert body["client_secret"] == "secret-xyz"  # ruff: ignore[hardcoded-password-string] — fixture value, not a real credential
     assert body["code"] == "auth-code-123"
     assert body["grant_type"] == "authorization_code"
 
-    assert payload.access_token == "access-abc"  # noqa: S105 — fixture value, not a real credential
+    assert payload.access_token == "access-abc"  # ruff: ignore[hardcoded-password-string] — fixture value, not a real credential
     assert payload.athlete_first_name == "Jane"
 
 
@@ -142,12 +142,12 @@ def test_refresh_preserves_athlete_fields(monkeypatch: pytest.MonkeyPatch) -> No
     assert route.called
     body = dict(httpx.QueryParams(route.calls.last.request.content.decode()))
     assert body["grant_type"] == "refresh_token"
-    assert body["refresh_token"] == "refresh-xyz"  # noqa: S105 — fixture value, not a real credential
+    assert body["refresh_token"] == "refresh-xyz"  # ruff: ignore[hardcoded-password-string] — fixture value, not a real credential
     assert body["client_id"] == "client-123"
-    assert body["client_secret"] == "secret-xyz"  # noqa: S105 — fixture value, not a real credential
+    assert body["client_secret"] == "secret-xyz"  # ruff: ignore[hardcoded-password-string] — fixture value, not a real credential
 
-    assert refreshed.access_token == "access-NEW"  # noqa: S105 — fixture value, not a real credential
-    assert refreshed.refresh_token == "refresh-NEW"  # noqa: S105 — fixture value, not a real credential
+    assert refreshed.access_token == "access-NEW"  # ruff: ignore[hardcoded-password-string] — fixture value, not a real credential
+    assert refreshed.refresh_token == "refresh-NEW"  # ruff: ignore[hardcoded-password-string] — fixture value, not a real credential
     assert refreshed.expires_at == 1735693200
     assert refreshed.athlete_id == existing.athlete_id
     assert refreshed.athlete_first_name == existing.athlete_first_name

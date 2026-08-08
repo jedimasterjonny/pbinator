@@ -88,8 +88,8 @@ _DETAIL_URL = "https://www.strava.com/api/v3/activities/{}"
 
 def _token() -> TokenPayload:
     return TokenPayload(
-        access_token="acc-1",  # noqa: S106 — fixture, not a credential
-        refresh_token="ref-1",  # noqa: S106 — fixture, not a credential
+        access_token="acc-1",  # ruff: ignore[hardcoded-password-func-arg] — fixture, not a credential
+        refresh_token="ref-1",  # ruff: ignore[hardcoded-password-func-arg] — fixture, not a credential
         expires_at=int(datetime.now(UTC).timestamp()) + 3600,
         athlete_id=42,
         athlete_first_name="Jane",
